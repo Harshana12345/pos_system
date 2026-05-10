@@ -9,7 +9,7 @@ try {
   dependenciesAvailable = false;
 }
 
-test('sale routes register GET /, GET /:id, and POST /', {
+test('sale routes register GET /, GET /:id, POST /, and POST /refund', {
   skip: !dependenciesAvailable,
 }, () => {
   const saleRoutes = require('../src/routes/saleRoutes');
@@ -23,8 +23,12 @@ test('sale routes register GET /, GET /:id, and POST /', {
   const hasCreateRoute = saleRoutes.stack.some(
     (layer) => layer.route?.path === '/' && layer.route.methods.post === true
   );
+  const hasRefundRoute = saleRoutes.stack.some(
+    (layer) => layer.route?.path === '/refund' && layer.route.methods.post === true
+  );
 
   assert.equal(hasListRoute, true);
   assert.equal(hasDetailRoute, true);
   assert.equal(hasCreateRoute, true);
+  assert.equal(hasRefundRoute, true);
 });

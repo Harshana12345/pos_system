@@ -529,3 +529,291 @@ test('createCompletedSale rejects underpayment before opening a transaction', {
     }
   );
 });
+
+test('processRefund logs refund, restocks inventory, and updates sale status', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const saleService = require('../src/services/saleService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/FROM sales/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '70',
+              customer_id: '1',
+              branch_id: '2',
+              status: 'completed',
+              subtotal: '19.00',
+              discount_amount: '0.00',
+              tax_amount: '0.00',
+              total_amount: '19.00',
+              paid_amount: '19.00',
+              balance_amount: '0.00',
+              payment_status: 'paid',
+              created_by: '42',
+              created_at: new Date('2026-05-10T00:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/FROM sale_items/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '90',
+              sale_id: params[0],
+              product_id: '10',
+              variant_id: '5',
+              quantity: '2',
+              unit_price: '9.50',
+              discount_amount: '0.00',
+              line_total: '19.00',
+            },
+          ],
+        };
+      }
+
+      if (/SELECT sale_item_id/.test(sql) && /FROM sale_refund_items/.test(sql)) {
+        return { rowCount: 0, rows: [] };
+      }
+
+      if (/INSERT INTO sale_refunds/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '80',
+              sale_id: params[0],
+              amount: params[1],
+              reason: params[2],
+              method: params[3],
+              reference_number: params[4],
+              notes: params[5],
+              created_by: params[6],
+              created_at: new Date('2026-05-10T00:02:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/INSERT INTO sale_refund_items/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '81',
+              refund_id: params[0],
+              sale_item_id: params[1],
+              quantity: params[2],
+              amount: params[3],
+            },
+          ],
+        };
+      }
+
+      if (/FROM inventory/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '30',
+              product_id: params[0],
+              variant_id: params[2],
+              branch_id: params[1],
+              quantity: 6,
+            },
+          ],
+        };
+      }
+
+      if (/UPDATE inventory/.test(sql)) {
+        return { rowCount: 1, rows: [] };
+      }
+
+      if (/INSERT INTO inventory_adjustments/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '99',
+              inventory_id: params[0],
+              product_id: params[1],
+              variant_id: params[2],
+              branch_id: params[3],
+              previous_quantity: params[4],
+              new_quantity: params[5],
+              quantity_change: params[6],
+              reason: params[7],
+              adjusted_by_user_id: params[8],
+              created_at: new Date('2026-05-10T00:03:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/sold_quantity/.test(sql) && /refunded_quantity/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [{ sold_quantity: '2', refunded_quantity: '1' }],
+        };
+      }
+
+      if (/UPDATE sales/.test(sql)) {
+        return { rowCount: 1, rows: [] };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  const refund = await saleService.processRefund(
+    { id: 42 },
+    {
+      saleId: '70',
+      reason: 'Customer return',
+      refundMethod: 'cash',
+      referenceNumber: 'RF-70',
+      notes: 'Returned at counter',
+      items: [{ saleItemId: '90', quantity: '1' }],
+    }
+  );
+
+  assert.deepEqual(
+    queries.map(({ sql }) => sql),
+    [
+      'BEGIN',
+      queries[1].sql,
+      queries[2].sql,
+      queries[3].sql,
+      queries[4].sql,
+      queries[5].sql,
+      queries[6].sql,
+      queries[7].sql,
+      queries[8].sql,
+      queries[9].sql,
+      queries[10].sql,
+      'COMMIT',
+    ]
+  );
+  assert.deepEqual(queries[4].params, [
+    70,
+    9.5,
+    'Customer return',
+    'cash',
+    'RF-70',
+    'Returned at counter',
+    42,
+  ]);
+  assert.deepEqual(queries[5].params, ['80', 90, 1, 9.5]);
+  assert.deepEqual(queries[6].params, [10, 2, 5]);
+  assert.deepEqual(queries[7].params, ['30', 7]);
+  assert.deepEqual(queries[8].params, [
+    '30',
+    10,
+    5,
+    2,
+    6,
+    7,
+    1,
+    'Sale 70 refunded',
+    42,
+  ]);
+  assert.deepEqual(queries[10].params, [70, 'partially_refunded', 'partially_refunded']);
+  assert.equal(refund.id, '80');
+  assert.equal(refund.amount, 9.5);
+  assert.equal(refund.items[0].quantity, 1);
+  assert.equal(refund.saleStatus, 'partially_refunded');
+  assert.equal(refund.inventoryAdjustments[0].quantityChange, 1);
+});
+
+test('processRefund rejects quantities already refunded and rolls back', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const saleService = require('../src/services/saleService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/FROM sales/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '70',
+              branch_id: '2',
+              status: 'partially_refunded',
+            },
+          ],
+        };
+      }
+
+      if (/FROM sale_items/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '90',
+              sale_id: params[0],
+              product_id: '10',
+              variant_id: null,
+              quantity: '2',
+              unit_price: '9.50',
+              discount_amount: '0.00',
+              line_total: '19.00',
+            },
+          ],
+        };
+      }
+
+      if (/SELECT sale_item_id/.test(sql) && /FROM sale_refund_items/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [{ sale_item_id: '90', refunded_quantity: '2' }],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  await assert.rejects(
+    () =>
+      saleService.processRefund(null, {
+        saleId: '70',
+        items: [{ saleItemId: '90', quantity: '1' }],
+      }),
+    {
+      statusCode: 400,
+      message: 'Refund quantity exceeds the remaining sale item quantity.',
+    }
+  );
+
+  assert.equal(queries.some(({ sql }) => /INSERT INTO sale_refunds/.test(sql)), false);
+  assert.equal(queries.at(-1).sql, 'ROLLBACK');
+});

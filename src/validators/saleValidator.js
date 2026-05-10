@@ -191,7 +191,68 @@ function validateSalePayload(payload) {
   return errors;
 }
 
+function validateRefundPayload(payload) {
+  const errors = [];
+
+  if (!isPlainObject(payload)) {
+    return ['Refund details are required.'];
+  }
+
+  const saleId = payload.saleId ?? payload.sale_id;
+
+  if (!isPositiveInteger(saleId)) {
+    errors.push('Sale ID must be a positive integer.');
+  }
+
+  if (!isOptionalString(payload.reason)) {
+    errors.push('Refund reason must be a string.');
+  }
+
+  if (!isOptionalString(payload.method ?? payload.refundMethod ?? payload.refund_method)) {
+    errors.push('Refund method must be a string.');
+  }
+
+  if (
+    !isOptionalString(
+      payload.referenceNumber ?? payload.reference_number ?? payload.refundReferenceNumber
+    )
+  ) {
+    errors.push('Refund reference number must be a string.');
+  }
+
+  if (!isOptionalString(payload.notes)) {
+    errors.push('Refund notes must be a string.');
+  }
+
+  if (!Array.isArray(payload.items) || payload.items.length === 0) {
+    errors.push('At least one refund item is required.');
+    return errors;
+  }
+
+  payload.items.forEach((item, index) => {
+    const label = `Refund item ${index + 1}`;
+
+    if (!isPlainObject(item)) {
+      errors.push(`${label} details are required.`);
+      return;
+    }
+
+    const saleItemId = item.saleItemId ?? item.sale_item_id;
+
+    if (!isPositiveInteger(saleItemId)) {
+      errors.push(`${label} sale item ID must be a positive integer.`);
+    }
+
+    if (!isPositiveInteger(item.quantity)) {
+      errors.push(`${label} quantity must be a positive integer.`);
+    }
+  });
+
+  return errors;
+}
+
 module.exports = {
+  validateRefundPayload,
   validateSaleFilters,
   validateSalePayload,
 };

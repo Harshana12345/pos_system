@@ -1,6 +1,10 @@
 const saleService = require('../services/saleService');
 const HttpError = require('../utils/httpError');
-const { validateSaleFilters, validateSalePayload } = require('../validators/saleValidator');
+const {
+  validateRefundPayload,
+  validateSaleFilters,
+  validateSalePayload,
+} = require('../validators/saleValidator');
 
 function isPositiveInteger(value) {
   const normalized = Number(value);
@@ -63,8 +67,28 @@ async function createSale(req, res, next) {
   }
 }
 
+async function refundSale(req, res, next) {
+  const errors = validateRefundPayload(req.body);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const refund = await saleService.processRefund(req.user, req.body);
+
+    res.status(201).json({
+      data: refund,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   createSale,
   getSale,
   listSales,
+  refundSale,
 };

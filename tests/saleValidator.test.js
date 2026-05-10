@@ -2,6 +2,7 @@ const assert = require('node:assert');
 const test = require('node:test');
 
 const {
+  validateRefundPayload,
   validateSaleFilters,
   validateSalePayload,
 } = require('../src/validators/saleValidator');
@@ -110,5 +111,51 @@ test('validateSalePayload rejects invalid sale items', () => {
     'Sale item 1 unit price must be a non-negative number.',
     'Sale item 1 discount amount must be a non-negative number.',
     'Sale item 2 details are required.',
+  ]);
+});
+
+test('validateRefundPayload accepts a sale refund payload', () => {
+  const errors = validateRefundPayload({
+    sale_id: '70',
+    reason: 'Customer return',
+    refundMethod: 'cash',
+    reference_number: 'RF-70',
+    notes: 'Returned at counter',
+    items: [
+      {
+        sale_item_id: '90',
+        quantity: '1',
+      },
+    ],
+  });
+
+  assert.deepEqual(errors, []);
+});
+
+test('validateRefundPayload rejects invalid refund fields', () => {
+  const errors = validateRefundPayload({
+    saleId: 'sale',
+    reason: 99,
+    refundMethod: false,
+    refundReferenceNumber: 42,
+    notes: [],
+    items: [
+      {
+        saleItemId: 'item',
+        quantity: '0',
+      },
+      null,
+    ],
+  });
+
+  assert.deepEqual(errors, [
+    'Sale ID must be a positive integer.',
+    'Refund reason must be a string.',
+    'Refund method must be a string.',
+    'Refund reference number must be a string.',
+    'Refund notes must be a string.',
+    'Refund item 1 sale item ID must be a positive integer.',
+    'Refund item 1 quantity must be a positive integer.',
+    'Refund item 2 details are required.',
   ]);
 });

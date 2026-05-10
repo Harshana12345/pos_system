@@ -134,6 +134,27 @@ function normalizeSalePayload(payload) {
   };
 }
 
+function normalizeRefundPayload(payload) {
+  return {
+    saleId: Number(payload.saleId ?? payload.sale_id),
+    reason: normalizeNullableString(payload.reason),
+    method: normalizeNullableString(
+      payload.method ?? payload.refundMethod ?? payload.refund_method
+    ),
+    referenceNumber: normalizeNullableString(
+      payload.referenceNumber ??
+        payload.reference_number ??
+        payload.refundReferenceNumber ??
+        payload.refund_reference_number
+    ),
+    notes: normalizeNullableString(payload.notes),
+    items: payload.items.map((item) => ({
+      saleItemId: Number(item.saleItemId ?? item.sale_item_id),
+      quantity: Number(item.quantity),
+    })),
+  };
+}
+
 function mapSaleItemRow(row) {
   return {
     id: row.id,
@@ -144,6 +165,31 @@ function mapSaleItemRow(row) {
     unitPrice: Number(row.unit_price),
     discountAmount: Number(row.discount_amount),
     lineTotal: Number(row.line_total),
+  };
+}
+
+function mapRefundItemRow(row) {
+  return {
+    id: row.id,
+    refundId: row.refund_id,
+    saleItemId: row.sale_item_id,
+    quantity: Number(row.quantity),
+    amount: Number(row.amount),
+  };
+}
+
+function mapRefundRow(row, items = []) {
+  return {
+    id: row.id,
+    saleId: row.sale_id,
+    amount: Number(row.amount),
+    reason: row.reason,
+    method: row.method,
+    referenceNumber: row.reference_number,
+    notes: row.notes,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    items,
   };
 }
 
@@ -303,6 +349,80 @@ async function deductInventoryItem(client, requester, saleId, branchId, item) {
   return mapAdjustmentRow(adjustmentResult.rows[0]);
 }
 
+async function restockInventoryItem(client, requester, saleId, branchId, item) {
+  const inventoryResult = await client.query(
+    `SELECT id,
+            product_id,
+            variant_id,
+            branch_id,
+            quantity
+     FROM inventory
+     WHERE product_id = $1
+       AND branch_id = $2
+       AND (
+         ($3::bigint IS NULL AND variant_id IS NULL)
+         OR variant_id = $3
+       )
+     FOR UPDATE`,
+    [item.productId, branchId, item.variantId]
+  );
+
+  if (inventoryResult.rowCount === 0) {
+    throw new HttpError(404, 'Inventory item not found.');
+  }
+
+  const inventory = inventoryResult.rows[0];
+  const previousQuantity = Number(inventory.quantity);
+  const newQuantity = previousQuantity + item.quantity;
+
+  await client.query(
+    `UPDATE inventory
+     SET quantity = $2,
+         last_updated = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [inventory.id, newQuantity]
+  );
+
+  const adjustmentResult = await client.query(
+    `INSERT INTO inventory_adjustments (
+       inventory_id,
+       product_id,
+       variant_id,
+       branch_id,
+       previous_quantity,
+       new_quantity,
+       quantity_change,
+       reason,
+       adjusted_by_user_id
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING id,
+               inventory_id,
+               product_id,
+               variant_id,
+               branch_id,
+               previous_quantity,
+               new_quantity,
+               quantity_change,
+               reason,
+               adjusted_by_user_id,
+               created_at`,
+    [
+      inventory.id,
+      item.productId,
+      item.variantId,
+      branchId,
+      previousQuantity,
+      newQuantity,
+      item.quantity,
+      `Sale ${saleId} refunded`,
+      requester?.id ?? null,
+    ]
+  );
+
+  return mapAdjustmentRow(adjustmentResult.rows[0]);
+}
+
 async function createCompletedSale(requester, payload) {
   const normalized = normalizeSalePayload(payload);
   const client = await database.pool.connect();
@@ -442,6 +562,211 @@ async function createCompletedSale(requester, payload) {
   }
 }
 
+async function processRefund(requester, payload) {
+  const normalized = normalizeRefundPayload(payload);
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const saleResult = await client.query(
+      `SELECT id,
+              customer_id,
+              branch_id,
+              status,
+              subtotal,
+              discount_amount,
+              tax_amount,
+              total_amount,
+              paid_amount,
+              balance_amount,
+              payment_status,
+              created_by,
+              created_at
+       FROM sales
+       WHERE id = $1
+       FOR UPDATE`,
+      [normalized.saleId]
+    );
+
+    if (saleResult.rowCount === 0) {
+      throw new HttpError(404, 'Sale not found.');
+    }
+
+    if (saleResult.rows[0].status === 'refunded') {
+      throw new HttpError(400, 'Sale has already been fully refunded.');
+    }
+
+    const saleItemIds = normalized.items.map((item) => item.saleItemId);
+    const saleItemResult = await client.query(
+      `SELECT id,
+              sale_id,
+              product_id,
+              variant_id,
+              quantity,
+              unit_price,
+              discount_amount,
+              line_total
+       FROM sale_items
+       WHERE sale_id = $1
+         AND id = ANY($2::bigint[])
+       FOR UPDATE`,
+      [normalized.saleId, saleItemIds]
+    );
+
+    if (saleItemResult.rowCount !== saleItemIds.length) {
+      throw new HttpError(400, 'Refund includes a sale item that does not belong to the sale.');
+    }
+
+    const refundedQuantityResult = await client.query(
+      `SELECT sale_item_id,
+              COALESCE(SUM(quantity), 0)::integer AS refunded_quantity
+       FROM sale_refund_items
+       WHERE sale_item_id = ANY($1::bigint[])
+       GROUP BY sale_item_id`,
+      [saleItemIds]
+    );
+    const refundedQuantityBySaleItemId = new Map(
+      refundedQuantityResult.rows.map((row) => [
+        String(row.sale_item_id),
+        Number(row.refunded_quantity),
+      ])
+    );
+    const saleItemsById = new Map(
+      saleItemResult.rows.map((row) => [String(row.id), mapSaleItemRow(row)])
+    );
+    const refundItems = normalized.items.map((item) => {
+      const saleItem = saleItemsById.get(String(item.saleItemId));
+      const alreadyRefunded = refundedQuantityBySaleItemId.get(String(item.saleItemId)) ?? 0;
+      const refundableQuantity = saleItem.quantity - alreadyRefunded;
+
+      if (item.quantity > refundableQuantity) {
+        throw new HttpError(400, 'Refund quantity exceeds the remaining sale item quantity.');
+      }
+
+      return {
+        ...item,
+        productId: Number(saleItem.productId),
+        variantId: normalizeNullableInteger(saleItem.variantId),
+        amount: roundCurrency((saleItem.lineTotal * item.quantity) / saleItem.quantity),
+      };
+    });
+    const refundAmount = roundCurrency(
+      refundItems.reduce((sum, item) => sum + item.amount, 0)
+    );
+
+    const refundResult = await client.query(
+      `INSERT INTO sale_refunds (
+         sale_id,
+         amount,
+         reason,
+         method,
+         reference_number,
+         notes,
+         created_by
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id,
+                 sale_id,
+                 amount,
+                 reason,
+                 method,
+                 reference_number,
+                 notes,
+                 created_by,
+                 created_at`,
+      [
+        normalized.saleId,
+        refundAmount,
+        normalized.reason,
+        normalized.method,
+        normalized.referenceNumber,
+        normalized.notes,
+        requester?.id ?? null,
+      ]
+    );
+    const refundId = refundResult.rows[0].id;
+    const refundItemValues = [];
+    const refundItemPlaceholders = refundItems.map((item, index) => {
+      const offset = index * 4;
+
+      refundItemValues.push(refundId, item.saleItemId, item.quantity, item.amount);
+
+      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`;
+    });
+    const refundItemResult = await client.query(
+      `INSERT INTO sale_refund_items (
+         refund_id,
+         sale_item_id,
+         quantity,
+         amount
+       )
+       VALUES ${refundItemPlaceholders.join(', ')}
+       RETURNING id,
+                 refund_id,
+                 sale_item_id,
+                 quantity,
+                 amount`,
+      refundItemValues
+    );
+    const inventoryAdjustments = [];
+
+    for (const item of refundItems) {
+      inventoryAdjustments.push(
+        await restockInventoryItem(
+          client,
+          requester,
+          normalized.saleId,
+          Number(saleResult.rows[0].branch_id),
+          item
+        )
+      );
+    }
+
+    const refundStatusResult = await client.query(
+      `SELECT COALESCE(SUM(sale_items.quantity), 0)::integer AS sold_quantity,
+              COALESCE(SUM(refunded_items.refunded_quantity), 0)::integer AS refunded_quantity
+       FROM sale_items
+       LEFT JOIN (
+         SELECT sale_item_id,
+                SUM(quantity) AS refunded_quantity
+         FROM sale_refund_items
+         GROUP BY sale_item_id
+       ) refunded_items
+         ON refunded_items.sale_item_id = sale_items.id
+       WHERE sale_items.sale_id = $1`,
+      [normalized.saleId]
+    );
+    const soldQuantity = Number(refundStatusResult.rows[0].sold_quantity);
+    const refundedQuantity = Number(refundStatusResult.rows[0].refunded_quantity);
+    const status = refundedQuantity >= soldQuantity ? 'refunded' : 'partially_refunded';
+
+    await client.query(
+      `UPDATE sales
+       SET status = $2,
+           payment_status = $3
+       WHERE id = $1`,
+      [normalized.saleId, status, status]
+    );
+
+    await client.query('COMMIT');
+
+    const mappedRefundItems = refundItemResult.rows.map(mapRefundItemRow);
+
+    return {
+      ...mapRefundRow(refundResult.rows[0], mappedRefundItems),
+      saleStatus: status,
+      inventoryAdjustments,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    throw mapForeignKeyError(error);
+  } finally {
+    client.release();
+  }
+}
+
 async function findAll(filters = {}) {
   const normalizedFilters = normalizeSaleFilters(filters);
   const params = [];
@@ -559,9 +884,13 @@ module.exports = {
   createCompletedSale,
   findAll,
   findById,
+  mapRefundItemRow,
+  mapRefundRow,
   mapPaymentRow,
   mapSaleItemRow,
   mapSaleRow,
+  normalizeRefundPayload,
   normalizeSaleFilters,
   normalizeSalePayload,
+  processRefund,
 };
