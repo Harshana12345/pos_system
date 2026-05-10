@@ -411,6 +411,96 @@ test('requestPasswordReset does not reveal missing accounts or send email', {
   assert.equal(queryCount, 1);
 });
 
+test('resetPassword validates the token, updates password, and revokes refresh tokens', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const crypto = require('crypto');
+  const database = require('../src/config/database');
+  const authService = require('../src/services/authService');
+  const { verifyPassword } = require('../src/utils/passwordHash');
+  const originalQuery = database.query;
+  const token = 'reset-token';
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  let resetSql;
+  let resetParams;
+  let revokeSql;
+  let revokeParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    if (sql.includes('UPDATE refresh_tokens')) {
+      revokeSql = sql;
+      revokeParams = params;
+
+      return { rowCount: 1, rows: [] };
+    }
+
+    resetSql = sql;
+    resetParams = params;
+
+    return { rowCount: 1, rows: [{ user_id: '1' }] };
+  };
+
+  await authService.resetPassword({
+    token: ` ${token} `,
+    password: 'new-password123',
+  });
+
+  assert.match(resetSql, /password_reset_tokens/);
+  assert.match(resetSql, /used_at IS NULL/);
+  assert.match(resetSql, /expires_at > CURRENT_TIMESTAMP/);
+  assert.match(resetSql, /SET password = \$2/);
+  assert.match(resetSql, /failed_login_attempts = 0/);
+  assert.match(resetSql, /locked_at = NULL/);
+  assert.match(resetSql, /used_at = CURRENT_TIMESTAMP/);
+  assert.equal(resetParams[0], tokenHash);
+  assert.notEqual(resetParams[1], 'new-password123');
+  assert.equal(await verifyPassword('new-password123', resetParams[1]), true);
+  assert.match(revokeSql, /UPDATE refresh_tokens/);
+  assert.match(revokeSql, /revoked_at = CURRENT_TIMESTAMP/);
+  assert.equal(revokeParams[0], '1');
+});
+
+test('resetPassword rejects invalid or expired reset tokens', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const authService = require('../src/services/authService');
+  const originalQuery = database.query;
+  let queryCount = 0;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql) => {
+    queryCount += 1;
+
+    if (sql.includes('UPDATE refresh_tokens')) {
+      throw new Error('Refresh tokens should not be revoked after a failed reset.');
+    }
+
+    return { rowCount: 0, rows: [] };
+  };
+
+  await assert.rejects(
+    () =>
+      authService.resetPassword({
+        token: 'bad-token',
+        password: 'new-password123',
+      }),
+    {
+      message: 'Invalid or expired reset token.',
+      statusCode: 400,
+    }
+  );
+
+  assert.equal(queryCount, 1);
+});
+
 test('refreshAccessToken validates stored refresh token and returns a new access token', {
   skip: !dependenciesAvailable,
 }, async (t) => {

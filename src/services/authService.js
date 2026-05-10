@@ -210,6 +210,50 @@ async function requestPasswordReset({ email }) {
   });
 }
 
+async function resetPassword({ token, password }) {
+  const passwordHash = await hashPassword(password);
+  const result = await database.query(
+    `WITH consumed_token AS (
+       UPDATE password_reset_tokens prt
+       SET used_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       FROM users u
+       WHERE u.id = prt.user_id
+         AND prt.token_hash = $1
+         AND prt.used_at IS NULL
+         AND prt.expires_at > CURRENT_TIMESTAMP
+         AND u.status = 'active'
+       RETURNING prt.user_id
+     ),
+     updated_user AS (
+       UPDATE users
+       SET password = $2,
+           failed_login_attempts = 0,
+           locked_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = (SELECT user_id FROM consumed_token)
+       RETURNING id
+     )
+     SELECT user_id
+     FROM consumed_token
+     WHERE EXISTS (SELECT 1 FROM updated_user)`,
+    [hashToken(String(token).trim()), passwordHash]
+  );
+
+  if (result.rowCount === 0) {
+    throw new HttpError(400, 'Invalid or expired reset token.');
+  }
+
+  await database.query(
+    `UPDATE refresh_tokens
+     SET revoked_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE user_id = $1
+       AND revoked_at IS NULL`,
+    [result.rows[0].user_id]
+  );
+}
+
 async function refreshAccessToken(refreshToken) {
   let payload;
 
@@ -299,4 +343,5 @@ module.exports = {
   refreshAccessToken,
   registerUser,
   requestPasswordReset,
+  resetPassword,
 };

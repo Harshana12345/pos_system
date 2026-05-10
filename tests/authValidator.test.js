@@ -7,6 +7,7 @@ const {
   validateLogoutPayload,
   validateRefreshPayload,
   validateRegisterPayload,
+  validateResetPasswordPayload,
 } = require('../src/validators/authValidator');
 
 test('register payload validation requires expected fields', () => {
@@ -58,6 +59,25 @@ test('forgot password payload validation requires a valid email', () => {
 test('forgot password payload validation accepts a valid email', () => {
   const errors = validateForgotPasswordPayload({
     email: 'admin@example.com',
+  });
+
+  assert.deepEqual(errors, []);
+});
+
+test('reset password payload validation requires token and valid password', () => {
+  assert.deepEqual(validateResetPasswordPayload({}), [
+    'Reset token is required.',
+    'Password is required.',
+  ]);
+  assert.deepEqual(validateResetPasswordPayload({ token: 'reset-token', password: 'short' }), [
+    'Password must be at least 8 characters.',
+  ]);
+});
+
+test('reset password payload validation accepts a token and valid password', () => {
+  const errors = validateResetPasswordPayload({
+    token: 'reset-token',
+    password: 'password123',
   });
 
   assert.deepEqual(errors, []);

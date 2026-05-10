@@ -77,6 +77,22 @@ function validateForgotPasswordPayload(payload) {
   return errors;
 }
 
+function validateResetPasswordPayload(payload) {
+  const errors = [];
+
+  if (!hasValue(payload.token)) {
+    errors.push('Reset token is required.');
+  }
+
+  if (!hasValue(payload.password)) {
+    errors.push('Password is required.');
+  } else if (String(payload.password).length < MIN_PASSWORD_LENGTH) {
+    errors.push(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+  }
+
+  return errors;
+}
+
 function validateLogoutPayload(payload) {
   return validateRefreshPayload(payload);
 }
@@ -88,4 +104,5 @@ module.exports = {
   validateLogoutPayload,
   validateRefreshPayload,
   validateRegisterPayload,
+  validateResetPasswordPayload,
 };
