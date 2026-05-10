@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "frontend:dev": "npm.cmd --prefix frontend run dev",
+    "frontend:build": "npm.cmd --prefix frontend run build",
+    "frontend:preview": "npm.cmd --prefix frontend run preview"
   },
   "repository": {
     "type": "git",
