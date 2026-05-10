@@ -2,6 +2,7 @@ const assert = require('node:assert');
 const test = require('node:test');
 
 const {
+  validateExpiringInventoryFilters,
   validateInventoryAdjustmentPayload,
   validateInventoryFilters,
   validateInventoryMovementFilters,
@@ -19,6 +20,21 @@ test('inventory filter validation rejects invalid branch id', () => {
   ]);
   assert.deepEqual(validateInventoryFilters({ branchId: 'abc' }), [
     'Branch ID must be a positive integer.',
+  ]);
+});
+
+test('expiring inventory filter validation accepts branch and threshold days', () => {
+  assert.deepEqual(validateExpiringInventoryFilters({}), []);
+  assert.deepEqual(validateExpiringInventoryFilters({ branchId: '1', thresholdDays: '0' }), []);
+  assert.deepEqual(validateExpiringInventoryFilters({ branch_id: '2', threshold_days: '30' }), []);
+});
+
+test('expiring inventory filter validation rejects invalid threshold days', () => {
+  assert.deepEqual(validateExpiringInventoryFilters({ thresholdDays: '-1' }), [
+    'Threshold days must be a non-negative integer.',
+  ]);
+  assert.deepEqual(validateExpiringInventoryFilters({ threshold_days: 'abc' }), [
+    'Threshold days must be a non-negative integer.',
   ]);
 });
 

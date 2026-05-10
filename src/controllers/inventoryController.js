@@ -1,6 +1,7 @@
 const inventoryService = require('../services/inventoryService');
 const HttpError = require('../utils/httpError');
 const {
+  validateExpiringInventoryFilters,
   validateInventoryAdjustmentPayload,
   validateInventoryFilters,
   validateInventoryMovementFilters,
@@ -35,6 +36,25 @@ async function listLowStockInventory(req, res, next) {
 
   try {
     const inventory = await inventoryService.findLowStock(req.query);
+
+    res.status(200).json({
+      data: inventory,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function listExpiringInventory(req, res, next) {
+  const errors = validateExpiringInventoryFilters(req.query);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const inventory = await inventoryService.findExpiring(req.query);
 
     res.status(200).json({
       data: inventory,
@@ -84,6 +104,7 @@ async function adjustInventory(req, res, next) {
 
 module.exports = {
   adjustInventory,
+  listExpiringInventory,
   listInventory,
   listInventoryMovements,
   listLowStockInventory,

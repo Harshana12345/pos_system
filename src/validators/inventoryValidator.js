@@ -13,6 +13,17 @@ function validateInventoryFilters(filters = {}) {
   return errors;
 }
 
+function validateExpiringInventoryFilters(filters = {}) {
+  const errors = validateInventoryFilters(filters);
+  const thresholdDays = filters.thresholdDays ?? filters.threshold_days;
+
+  if (thresholdDays !== undefined && !isNonNegativeInteger(thresholdDays)) {
+    errors.push('Threshold days must be a non-negative integer.');
+  }
+
+  return errors;
+}
+
 function isValidDate(value) {
   if (value === null || value === '') {
     return false;
@@ -123,6 +134,7 @@ function validateInventoryAdjustmentPayload(payload = {}) {
 }
 
 module.exports = {
+  validateExpiringInventoryFilters,
   validateInventoryAdjustmentPayload,
   validateInventoryFilters,
   validateInventoryMovementFilters,

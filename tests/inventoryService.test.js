@@ -169,6 +169,70 @@ test('findLowStock lists inventory below reorder level', {
   assert.equal(inventory[0].product.name, 'Coffee');
 });
 
+test('findExpiring lists inventory with products expiring within threshold', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const inventoryService = require('../src/services/inventoryService');
+  const originalQuery = database.query;
+  let selectSql;
+  let selectParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params = []) => {
+    selectSql = sql;
+    selectParams = params;
+
+    return {
+      rowCount: 1,
+      rows: [
+        {
+          id: '1',
+          product_id: '10',
+          variant_id: null,
+          branch_id: '3',
+          quantity: 4,
+          last_updated: new Date('2026-05-01T00:00:00.000Z'),
+          reorder_level: 5,
+          product_name: 'Milk',
+          product_sku: 'MILK',
+          product_barcode: null,
+          product_status: 'active',
+          product_expiry_date: '2026-05-15',
+          days_until_expiry: 5,
+          variant_name: null,
+          variant_sku: null,
+          variant_barcode: null,
+          variant_status: null,
+          branch_name: 'Downtown',
+          branch_status: 'active',
+        },
+      ],
+    };
+  };
+
+  const inventory = await inventoryService.findExpiring({
+    branchId: '3',
+    thresholdDays: '14',
+  });
+
+  assert.match(selectSql, /products\.expiry_date IS NOT NULL/);
+  assert.match(selectSql, /products\.expiry_date >= CURRENT_DATE/);
+  assert.match(
+    selectSql,
+    /products\.expiry_date <= CURRENT_DATE \+ \(\$2::integer \* INTERVAL '1 day'\)/
+  );
+  assert.match(selectSql, /products\.expiry_date AS product_expiry_date/);
+  assert.match(selectSql, /products\.expiry_date - CURRENT_DATE AS days_until_expiry/);
+  assert.match(selectSql, /inventory\.branch_id = \$1/);
+  assert.deepEqual(selectParams, [3, 14]);
+  assert.equal(inventory[0].product.expiryDate, '2026-05-15');
+  assert.equal(inventory[0].product.daysUntilExpiry, 5);
+});
+
 test('findMovements lists stock movements with filters', {
   skip: !dependenciesAvailable,
 }, async (t) => {

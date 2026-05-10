@@ -52,3 +52,14 @@ test('inventory routes register GET /low-stock', {
 
   assert.equal(hasListLowStockInventoryRoute, true);
 });
+
+test('inventory routes register GET /expiring', {
+  skip: !dependenciesAvailable,
+}, () => {
+  const inventoryRoutes = require('../src/routes/inventoryRoutes');
+  const hasListExpiringInventoryRoute = inventoryRoutes.stack.some(
+    (layer) => layer.route?.path === '/expiring' && layer.route.methods.get === true
+  );
+
+  assert.equal(hasListExpiringInventoryRoute, true);
+});

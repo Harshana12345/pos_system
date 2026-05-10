@@ -1,4 +1,5 @@
 const database = require('../config/database');
+const { env } = require('../config/env');
 const InventoryItem = require('../models/InventoryItem');
 const HttpError = require('../utils/httpError');
 
@@ -21,6 +22,12 @@ function mapInventoryRow(row) {
       sku: row.product_sku,
       barcode: row.product_barcode,
       status: row.product_status,
+      ...(row.product_expiry_date !== undefined
+        ? {
+            expiryDate: row.product_expiry_date,
+            daysUntilExpiry: Number(row.days_until_expiry),
+          }
+        : {}),
     },
     variant: row.variant_id
       ? {
@@ -59,8 +66,20 @@ function normalizeMovementFilters(filters = {}) {
   };
 }
 
+function normalizeExpiringFilters(filters = {}) {
+  const thresholdDays = filters.thresholdDays ?? filters.threshold_days;
+
+  return {
+    branchId: normalizeBranchId(filters),
+    thresholdDays:
+      thresholdDays === undefined ? env.inventory.expiringThresholdDays : Number(thresholdDays),
+  };
+}
+
 async function findInventory(filters = {}, options = {}) {
-  const branchId = normalizeBranchId(filters);
+  const expiringFilters =
+    options.expiringOnly === true ? normalizeExpiringFilters(filters) : null;
+  const branchId = expiringFilters?.branchId ?? normalizeBranchId(filters);
   const params = [];
   const where = ['products.deleted_at IS NULL', 'branches.deleted_at IS NULL'];
 
@@ -71,6 +90,13 @@ async function findInventory(filters = {}, options = {}) {
 
   if (options.lowStockOnly === true) {
     where.push('inventory.quantity < COALESCE(product_variants.reorder_level, products.reorder_level)');
+  }
+
+  if (options.expiringOnly === true) {
+    params.push(expiringFilters.thresholdDays);
+    where.push('products.expiry_date IS NOT NULL');
+    where.push('products.expiry_date >= CURRENT_DATE');
+    where.push(`products.expiry_date <= CURRENT_DATE + ($${params.length}::integer * INTERVAL '1 day')`);
   }
 
   const result = await database.query(
@@ -85,6 +111,11 @@ async function findInventory(filters = {}, options = {}) {
             products.sku AS product_sku,
             products.barcode AS product_barcode,
             products.status AS product_status,
+            ${
+              options.expiringOnly === true
+                ? 'products.expiry_date AS product_expiry_date, products.expiry_date - CURRENT_DATE AS days_until_expiry,'
+                : ''
+            }
             product_variants.name AS variant_name,
             product_variants.sku AS variant_sku,
             product_variants.barcode AS variant_barcode,
@@ -112,6 +143,10 @@ async function findAll(filters = {}) {
 
 async function findLowStock(filters = {}) {
   return findInventory(filters, { lowStockOnly: true });
+}
+
+async function findExpiring(filters = {}) {
+  return findInventory(filters, { expiringOnly: true });
 }
 
 function normalizeAdjustmentPayload(payload) {
@@ -375,6 +410,7 @@ async function adjustStock(requester, payload) {
 module.exports = {
   adjustStock,
   findAll,
+  findExpiring,
   findLowStock,
   findMovements,
   mapAdjustmentRow,

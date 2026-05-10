@@ -29,6 +29,9 @@ const env = {
     expiresInMinutes: Number(process.env.PASSWORD_RESET_EXPIRES_IN_MINUTES || 60),
     resetUrl: process.env.PASSWORD_RESET_URL || 'http://localhost:5173/reset-password',
   },
+  inventory: {
+    expiringThresholdDays: Number(process.env.INVENTORY_EXPIRING_THRESHOLD_DAYS || 30),
+  },
   email: {
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),
