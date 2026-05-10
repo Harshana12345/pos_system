@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('node:path');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -15,6 +16,7 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 if (env.nodeEnv !== 'test') {
   app.use(morgan('dev'));

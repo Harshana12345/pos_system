@@ -21,10 +21,12 @@ export async function apiRequest<TResponse>(
   path: string,
   options: RequestInit = {},
 ): Promise<TResponse> {
+  const isFormData = options.body instanceof FormData;
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...options.headers,
     },
   });

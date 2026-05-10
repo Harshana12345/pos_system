@@ -1,6 +1,7 @@
 const { Router } = require('express');
 
 const {
+  createProduct,
   deleteProduct,
   getProduct,
   getProductByBarcode,
@@ -13,6 +14,7 @@ const { productImageUpload, PRODUCT_IMAGE_MAX_FILES } = require('../middleware/p
 const router = Router();
 
 router.get('/', listProducts);
+router.post('/', createProduct);
 router.get('/barcode/:code', getProductByBarcode);
 router.get('/:id', getProduct);
 router.post('/:id/images', productImageUpload.array('images', PRODUCT_IMAGE_MAX_FILES), uploadProductImages);

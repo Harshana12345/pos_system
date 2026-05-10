@@ -56,6 +56,25 @@ async function getProductByBarcode(req, res, next) {
   }
 }
 
+async function createProduct(req, res, next) {
+  const errors = validateUpdateProductPayload(req.body);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const product = await productService.createProduct(req.body);
+
+    res.status(201).json({
+      data: product,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function updateProduct(req, res, next) {
   const errors = [
     ...validateProductId(req.params.id),
@@ -103,6 +122,7 @@ function uploadProductImages(req, res) {
       fieldName: file.fieldname,
       originalName: file.originalname,
       fileName: file.filename,
+      imageUrl: `/uploads/products/${file.filename}`,
       mimeType: file.mimetype,
       size: file.size,
       path: file.path,
@@ -111,6 +131,7 @@ function uploadProductImages(req, res) {
 }
 
 module.exports = {
+  createProduct,
   deleteProduct,
   getProduct,
   getProductByBarcode,

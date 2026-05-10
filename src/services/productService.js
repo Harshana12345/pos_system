@@ -404,6 +404,99 @@ async function updateProduct(
   }
 }
 
+async function createProduct({
+  name,
+  sku,
+  barcode,
+  description,
+  categoryId,
+  category_id,
+  brandId,
+  brand_id,
+  costPrice,
+  cost_price,
+  sellingPrice,
+  selling_price,
+  price,
+  taxRate,
+  tax_rate,
+  reorderLevel,
+  reorder_level,
+  status,
+  expiryDate,
+  expiry_date,
+  supplierId,
+  supplier_id,
+  variants = [],
+  images = [],
+}) {
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const productResult = await client.query(
+      `INSERT INTO products (
+         name,
+         sku,
+         barcode,
+         description,
+         category_id,
+         brand_id,
+         cost_price,
+         selling_price,
+         tax_rate,
+         reorder_level,
+         status,
+         expiry_date,
+         supplier_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       RETURNING id`,
+      [
+        name.trim(),
+        sku.trim(),
+        normalizeNullableString(barcode),
+        normalizeNullableString(description),
+        normalizeNullableInteger(categoryId ?? category_id),
+        normalizeNullableInteger(brandId ?? brand_id),
+        Number(costPrice ?? cost_price ?? 0),
+        Number(sellingPrice ?? selling_price ?? price ?? 0),
+        Number(taxRate ?? tax_rate ?? 0),
+        Number(reorderLevel ?? reorder_level ?? 0),
+        status || 'active',
+        normalizeNullableDate(expiryDate ?? expiry_date),
+        normalizeNullableInteger(supplierId ?? supplier_id),
+      ]
+    );
+
+    const productId = productResult.rows[0].id;
+
+    await replaceProductVariants(client, productId, variants);
+    await replaceProductImages(client, productId, images);
+
+    const product = await findProductDetailsById(client, productId);
+
+    await client.query('COMMIT');
+
+    return product;
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    if (error.code === '23505') {
+      throw new HttpError(409, 'Product SKU, barcode, variant SKU, or image URL already exists.');
+    }
+
+    if (error.code === '23503') {
+      throw new HttpError(400, 'Product category, brand, or supplier reference is invalid.');
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function deleteProduct(id) {
   const result = await database.query(
     `UPDATE products
@@ -421,6 +514,7 @@ async function deleteProduct(id) {
 }
 
 module.exports = {
+  createProduct,
   deleteProduct,
   findAll,
   findByBarcode,
