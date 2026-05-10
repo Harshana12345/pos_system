@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   validateCustomerId,
   validateCustomerPayload,
+  validateLoyaltyPointsPayload,
 } = require('../src/validators/customerValidator');
 
 test('customer id validation requires a positive integer', () => {
@@ -46,4 +47,23 @@ test('customer payload validation rejects invalid details', () => {
   assert.match(errors.join(' '), /Customer credit balance must be a non-negative number/);
   assert.match(errors.join(' '), /Customer status must be active or inactive/);
   assert.match(errors.join(' '), /Customer group ID must be a positive integer/);
+});
+
+test('loyalty points payload validation accepts add and redeem actions', () => {
+  assert.deepEqual(validateLoyaltyPointsPayload({ action: 'add', points: 10 }), []);
+  assert.deepEqual(validateLoyaltyPointsPayload({ action: 'redeem', points: '5' }), []);
+});
+
+test('loyalty points payload validation rejects invalid adjustments', () => {
+  assert.deepEqual(validateLoyaltyPointsPayload(null), [
+    'Loyalty points adjustment is required.',
+  ]);
+
+  const errors = validateLoyaltyPointsPayload({
+    action: 'replace',
+    points: 0,
+  });
+
+  assert.match(errors.join(' '), /Loyalty points action must be add or redeem/);
+  assert.match(errors.join(' '), /Loyalty points must be a positive integer/);
 });

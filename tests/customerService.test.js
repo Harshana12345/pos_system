@@ -341,6 +341,133 @@ test('updateCustomer rejects missing customers', {
   assert.match(updateSql, /WHERE id = \$1/);
 });
 
+test('adjustLoyaltyPoints adds and redeems points', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const customerService = require('../src/services/customerService');
+  const originalQuery = database.query;
+  const queries = [];
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    queries.push({ sql, params });
+
+    return {
+      rowCount: 1,
+      rows: [
+        {
+          id: '1',
+          full_name: 'Jane Perera',
+          phone: null,
+          email: null,
+          address: null,
+          loyalty_points: /loyalty_points \+ \$2/.test(sql) ? 25 : 20,
+          credit_balance: '0.00',
+          notes: null,
+          status: 'active',
+          customer_group_id: null,
+          created_at: new Date('2026-05-01T00:00:00.000Z'),
+          updated_at: new Date('2026-05-02T00:00:00.000Z'),
+        },
+      ],
+    };
+  };
+
+  const addedCustomer = await customerService.adjustLoyaltyPoints('1', {
+    action: 'add',
+    points: '15',
+  });
+  const redeemedCustomer = await customerService.adjustLoyaltyPoints('1', {
+    action: 'redeem',
+    points: 5,
+  });
+
+  assert.match(queries[0].sql, /loyalty_points = loyalty_points \+ \$2/);
+  assert.doesNotMatch(queries[0].sql, /loyalty_points >= \$2/);
+  assert.deepEqual(queries[0].params, [1, 15]);
+  assert.match(queries[1].sql, /loyalty_points = loyalty_points - \$2/);
+  assert.match(queries[1].sql, /loyalty_points >= \$2/);
+  assert.deepEqual(queries[1].params, [1, 5]);
+  assert.equal(addedCustomer.loyaltyPoints, 25);
+  assert.equal(redeemedCustomer.loyaltyPoints, 20);
+});
+
+test('adjustLoyaltyPoints rejects missing customers', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const customerService = require('../src/services/customerService');
+  const originalQuery = database.query;
+  const queries = [];
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    queries.push({ sql, params });
+
+    return { rowCount: 0, rows: [] };
+  };
+
+  await assert.rejects(
+    () =>
+      customerService.adjustLoyaltyPoints('99', {
+        action: 'add',
+        points: 10,
+      }),
+    {
+      message: 'Customer not found.',
+      statusCode: 404,
+    }
+  );
+
+  assert.match(queries[0].sql, /UPDATE customers/);
+  assert.match(queries[1].sql, /FROM customers/);
+  assert.deepEqual(queries[1].params, [99]);
+});
+
+test('adjustLoyaltyPoints rejects insufficient points when redeeming', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const customerService = require('../src/services/customerService');
+  const originalQuery = database.query;
+  const queries = [];
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    queries.push({ sql, params });
+
+    return queries.length === 1
+      ? { rowCount: 0, rows: [] }
+      : { rowCount: 1, rows: [{ id: '1' }] };
+  };
+
+  await assert.rejects(
+    () =>
+      customerService.adjustLoyaltyPoints('1', {
+        action: 'redeem',
+        points: 50,
+      }),
+    {
+      message: 'Insufficient loyalty points.',
+      statusCode: 400,
+    }
+  );
+
+  assert.match(queries[0].sql, /loyalty_points >= \$2/);
+  assert.deepEqual(queries[0].params, [1, 50]);
+  assert.deepEqual(queries[1].params, [1]);
+});
+
 test('deleteCustomer deletes by id and rejects missing customers', {
   skip: !dependenciesAvailable,
 }, async (t) => {

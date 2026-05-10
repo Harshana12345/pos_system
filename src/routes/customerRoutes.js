@@ -1,6 +1,7 @@
 const { Router } = require('express');
 
 const {
+  adjustCustomerLoyaltyPoints,
   createCustomer,
   deleteCustomer,
   getCustomer,
@@ -15,6 +16,7 @@ router.get('/', listCustomers);
 router.get('/:id/purchase-history', getCustomerPurchaseHistory);
 router.get('/:id', getCustomer);
 router.post('/', createCustomer);
+router.post('/:id/loyalty-points', adjustCustomerLoyaltyPoints);
 router.put('/:id', updateCustomer);
 router.delete('/:id', deleteCustomer);
 

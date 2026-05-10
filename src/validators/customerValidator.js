@@ -91,7 +91,26 @@ function validateCustomerPayload(payload) {
   return errors;
 }
 
+function validateLoyaltyPointsPayload(payload) {
+  const errors = [];
+
+  if (!isPlainObject(payload)) {
+    return ['Loyalty points adjustment is required.'];
+  }
+
+  if (!['add', 'redeem'].includes(payload.action)) {
+    errors.push('Loyalty points action must be add or redeem.');
+  }
+
+  if (!isPositiveInteger(payload.points)) {
+    errors.push('Loyalty points must be a positive integer.');
+  }
+
+  return errors;
+}
+
 module.exports = {
   validateCustomerId,
   validateCustomerPayload,
+  validateLoyaltyPointsPayload,
 };

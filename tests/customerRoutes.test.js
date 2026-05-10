@@ -34,6 +34,11 @@ test('customer routes register CRUD endpoints', {
       layer.route?.path === '/:id/purchase-history' &&
       layer.route.methods.get === true
   );
+  const hasLoyaltyPointsRoute = customerRoutes.stack.some(
+    (layer) =>
+      layer.route?.path === '/:id/loyalty-points' &&
+      layer.route.methods.post === true
+  );
 
   assert.equal(hasListRoute, true);
   assert.equal(hasGetRoute, true);
@@ -41,4 +46,5 @@ test('customer routes register CRUD endpoints', {
   assert.equal(hasUpdateRoute, true);
   assert.equal(hasDeleteRoute, true);
   assert.equal(hasPurchaseHistoryRoute, true);
+  assert.equal(hasLoyaltyPointsRoute, true);
 });

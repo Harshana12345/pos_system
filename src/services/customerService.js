@@ -323,6 +323,49 @@ async function updateCustomer(
   }
 }
 
+async function adjustLoyaltyPoints(id, { action, points }) {
+  if (!['add', 'redeem'].includes(action)) {
+    throw new HttpError(400, 'Loyalty points action must be add or redeem.');
+  }
+
+  const customerId = Number(id);
+  const pointAmount = Number(points);
+
+  if (!Number.isInteger(pointAmount) || pointAmount <= 0) {
+    throw new HttpError(400, 'Loyalty points must be a positive integer.');
+  }
+
+  const operator = action === 'add' ? '+' : '-';
+  const condition = action === 'redeem' ? 'AND loyalty_points >= $2' : '';
+
+  const result = await database.query(
+    `UPDATE customers
+     SET loyalty_points = loyalty_points ${operator} $2,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+       ${condition}
+     RETURNING ${CUSTOMER_COLUMNS}`,
+    [customerId, pointAmount]
+  );
+
+  if (result.rowCount > 0) {
+    return mapCustomerRow(result.rows[0]);
+  }
+
+  const customerResult = await database.query(
+    `SELECT id
+     FROM customers
+     WHERE id = $1`,
+    [customerId]
+  );
+
+  if (customerResult.rowCount === 0) {
+    throw new HttpError(404, 'Customer not found.');
+  }
+
+  throw new HttpError(400, 'Insufficient loyalty points.');
+}
+
 async function deleteCustomer(id) {
   const result = await database.query(
     `DELETE FROM customers
@@ -337,6 +380,7 @@ async function deleteCustomer(id) {
 }
 
 module.exports = {
+  adjustLoyaltyPoints,
   createCustomer,
   deleteCustomer,
   findAll,

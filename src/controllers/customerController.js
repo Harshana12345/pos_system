@@ -3,6 +3,7 @@ const HttpError = require('../utils/httpError');
 const {
   validateCustomerId,
   validateCustomerPayload,
+  validateLoyaltyPointsPayload,
 } = require('../validators/customerValidator');
 
 async function listCustomers(_req, res, next) {
@@ -96,6 +97,31 @@ async function updateCustomer(req, res, next) {
   }
 }
 
+async function adjustCustomerLoyaltyPoints(req, res, next) {
+  const errors = [
+    ...validateCustomerId(req.params.id),
+    ...validateLoyaltyPointsPayload(req.body),
+  ];
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const customer = await customerService.adjustLoyaltyPoints(
+      req.params.id,
+      req.body
+    );
+
+    res.status(200).json({
+      data: customer,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function deleteCustomer(req, res, next) {
   const errors = validateCustomerId(req.params.id);
 
@@ -114,6 +140,7 @@ async function deleteCustomer(req, res, next) {
 }
 
 module.exports = {
+  adjustCustomerLoyaltyPoints,
   createCustomer,
   deleteCustomer,
   getCustomer,
