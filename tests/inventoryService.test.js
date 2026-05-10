@@ -113,3 +113,183 @@ test('findAll filters inventory by branch id', {
   assert.match(selectSql, /inventory\.branch_id = \$1/);
   assert.deepEqual(selectParams, [7]);
 });
+
+test('adjustStock updates inventory quantity and logs reason', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const inventoryService = require('../src/services/inventoryService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/SELECT inventory\.id/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '1',
+              product_id: '10',
+              variant_id: null,
+              branch_id: '3',
+              quantity: 4,
+              last_updated: new Date('2026-05-01T00:00:00.000Z'),
+              reorder_level: 5,
+              product_name: 'Coffee',
+              product_sku: 'COFFEE',
+              product_barcode: null,
+              product_status: 'active',
+              variant_name: null,
+              variant_sku: null,
+              variant_barcode: null,
+              variant_status: null,
+              branch_name: 'Downtown',
+              branch_status: 'active',
+            },
+          ],
+        };
+      }
+
+      if (/UPDATE inventory/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [{ last_updated: new Date('2026-05-02T00:00:00.000Z') }],
+        };
+      }
+
+      if (/INSERT INTO inventory_adjustments/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '99',
+              inventory_id: '1',
+              product_id: '10',
+              variant_id: null,
+              branch_id: '3',
+              previous_quantity: 4,
+              new_quantity: 7,
+              quantity_change: 3,
+              reason: params[7],
+              adjusted_by_user_id: params[8],
+              created_at: new Date('2026-05-02T00:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  const result = await inventoryService.adjustStock(
+    { id: 42 },
+    {
+      inventoryId: '1',
+      quantityChange: '3',
+      reason: ' Cycle count correction ',
+    }
+  );
+
+  assert.deepEqual(
+    queries.map(({ sql }) => sql),
+    [
+      'BEGIN',
+      queries[1].sql,
+      queries[2].sql,
+      queries[3].sql,
+      'COMMIT',
+    ]
+  );
+  assert.match(queries[1].sql, /FOR UPDATE OF inventory/);
+  assert.deepEqual(queries[2].params, [1, 7]);
+  assert.deepEqual(queries[3].params, [
+    1,
+    '10',
+    null,
+    '3',
+    4,
+    7,
+    3,
+    'Cycle count correction',
+    42,
+  ]);
+  assert.equal(result.inventory.quantity, 7);
+  assert.equal(result.adjustment.previousQuantity, 4);
+  assert.equal(result.adjustment.newQuantity, 7);
+  assert.equal(result.adjustment.reason, 'Cycle count correction');
+});
+
+test('adjustStock rejects adjustments that would make stock negative', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const inventoryService = require('../src/services/inventoryService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/SELECT inventory\.id/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '1',
+              product_id: '10',
+              variant_id: null,
+              branch_id: '3',
+              quantity: 2,
+              last_updated: new Date('2026-05-01T00:00:00.000Z'),
+              reorder_level: 5,
+              product_name: 'Coffee',
+              product_sku: 'COFFEE',
+              product_barcode: null,
+              product_status: 'active',
+              variant_name: null,
+              variant_sku: null,
+              variant_barcode: null,
+              variant_status: null,
+              branch_name: 'Downtown',
+              branch_status: 'active',
+            },
+          ],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  await assert.rejects(
+    () =>
+      inventoryService.adjustStock(
+        { id: 42 },
+        { inventoryId: '1', adjustment: '-3', reason: 'Waste' }
+      ),
+    {
+      statusCode: 400,
+      message: 'Stock quantity cannot be negative.',
+    }
+  );
+
+  assert.equal(queries.some(({ sql }) => /UPDATE inventory/.test(sql)), false);
+  assert.equal(queries.at(-1).sql, 'ROLLBACK');
+});

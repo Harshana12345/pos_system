@@ -1,5 +1,6 @@
 const database = require('../config/database');
 const InventoryItem = require('../models/InventoryItem');
+const HttpError = require('../utils/httpError');
 
 function mapInventoryRow(row) {
   const reorderLevel = Number(row.reorder_level);
@@ -87,4 +88,147 @@ async function findAll(filters = {}) {
   return result.rows.map(mapInventoryRow);
 }
 
-module.exports = { findAll, mapInventoryRow };
+function normalizeAdjustmentPayload(payload) {
+  const quantity = payload.quantity;
+  const quantityChange = payload.quantityChange ?? payload.quantity_change ?? payload.adjustment;
+
+  return {
+    inventoryId: Number(payload.inventoryId ?? payload.inventory_id),
+    quantity: quantity === undefined ? undefined : Number(quantity),
+    quantityChange: quantityChange === undefined ? undefined : Number(quantityChange),
+    reason: payload.reason.trim(),
+  };
+}
+
+function mapAdjustmentRow(row) {
+  return {
+    id: row.id,
+    inventoryId: row.inventory_id,
+    productId: row.product_id,
+    variantId: row.variant_id,
+    branchId: row.branch_id,
+    previousQuantity: Number(row.previous_quantity),
+    newQuantity: Number(row.new_quantity),
+    quantityChange: Number(row.quantity_change),
+    reason: row.reason,
+    adjustedByUserId: row.adjusted_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+async function adjustStock(requester, payload) {
+  const { inventoryId, quantity, quantityChange, reason } = normalizeAdjustmentPayload(payload);
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const inventoryResult = await client.query(
+      `SELECT inventory.id,
+              inventory.product_id,
+              inventory.variant_id,
+              inventory.branch_id,
+              inventory.quantity,
+              inventory.last_updated,
+              COALESCE(product_variants.reorder_level, products.reorder_level) AS reorder_level,
+              products.name AS product_name,
+              products.sku AS product_sku,
+              products.barcode AS product_barcode,
+              products.status AS product_status,
+              product_variants.name AS variant_name,
+              product_variants.sku AS variant_sku,
+              product_variants.barcode AS variant_barcode,
+              product_variants.status AS variant_status,
+              branches.name AS branch_name,
+              branches.status AS branch_status
+       FROM inventory
+       INNER JOIN products
+         ON products.id = inventory.product_id
+       LEFT JOIN product_variants
+         ON product_variants.id = inventory.variant_id
+       INNER JOIN branches
+         ON branches.id = inventory.branch_id
+       WHERE inventory.id = $1
+         AND products.deleted_at IS NULL
+         AND branches.deleted_at IS NULL
+       FOR UPDATE OF inventory`,
+      [inventoryId]
+    );
+
+    if (inventoryResult.rowCount === 0) {
+      throw new HttpError(404, 'Inventory item not found.');
+    }
+
+    const currentQuantity = Number(inventoryResult.rows[0].quantity);
+    const newQuantity = quantity === undefined ? currentQuantity + quantityChange : quantity;
+
+    if (newQuantity < 0) {
+      throw new HttpError(400, 'Stock quantity cannot be negative.');
+    }
+
+    const updateResult = await client.query(
+      `UPDATE inventory
+       SET quantity = $2,
+           last_updated = CURRENT_TIMESTAMP
+       WHERE id = $1
+       RETURNING last_updated`,
+      [inventoryId, newQuantity]
+    );
+
+    const adjustmentResult = await client.query(
+      `INSERT INTO inventory_adjustments (
+         inventory_id,
+         product_id,
+         variant_id,
+         branch_id,
+         previous_quantity,
+         new_quantity,
+         quantity_change,
+         reason,
+         adjusted_by_user_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id,
+                 inventory_id,
+                 product_id,
+                 variant_id,
+                 branch_id,
+                 previous_quantity,
+                 new_quantity,
+                 quantity_change,
+                 reason,
+                 adjusted_by_user_id,
+                 created_at`,
+      [
+        inventoryId,
+        inventoryResult.rows[0].product_id,
+        inventoryResult.rows[0].variant_id,
+        inventoryResult.rows[0].branch_id,
+        currentQuantity,
+        newQuantity,
+        newQuantity - currentQuantity,
+        reason,
+        requester?.id ?? null,
+      ]
+    );
+
+    const inventory = mapInventoryRow({
+      ...inventoryResult.rows[0],
+      quantity: newQuantity,
+      last_updated: updateResult.rows[0].last_updated,
+    });
+    const adjustment = mapAdjustmentRow(adjustmentResult.rows[0]);
+
+    await client.query('COMMIT');
+
+    return { inventory, adjustment };
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { adjustStock, findAll, mapAdjustmentRow, mapInventoryRow };
