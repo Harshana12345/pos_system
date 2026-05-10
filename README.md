@@ -12,6 +12,20 @@ Express.js backend scaffold for a POS system.
 - `npm.cmd run frontend:dev` starts the React development server.
 - `npm.cmd run frontend:build` builds the React frontend.
 
+## Docker Compose
+
+Start the backend, frontend, and PostgreSQL services:
+
+```sh
+docker compose up --build
+```
+
+- Backend API: `http://localhost:3000/api/v1`
+- React frontend: `http://localhost:5173`
+- PostgreSQL: `localhost:5432`
+
+The Compose setup uses named volumes for `node_modules` and PostgreSQL data.
+
 ## Structure
 
 ```text
