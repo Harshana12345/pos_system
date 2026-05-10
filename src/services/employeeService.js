@@ -117,6 +117,37 @@ async function ensureRequesterCanDeleteEmployee(client, requester, branchId) {
   }
 }
 
+async function ensureRequesterCanTrackAttendance(client, requester, employee) {
+  const result = await client.query(
+    `SELECT name
+     FROM roles
+     WHERE id = $1
+     LIMIT 1`,
+    [Number(requester.roleId)]
+  );
+  const requesterRoleName = result.rows[0]?.name;
+
+  if (!requesterRoleName) {
+    throw new HttpError(403, 'Authenticated user role is not recognized.');
+  }
+
+  if (requesterRoleName === 'admin') {
+    return;
+  }
+
+  if (requesterRoleName === 'manager') {
+    if (Number(requester.branchId) !== Number(employee.branch_id)) {
+      throw new HttpError(403, 'Managers can only track attendance for their branch.');
+    }
+
+    return;
+  }
+
+  if (Number(requester.id) !== Number(employee.user_id)) {
+    throw new HttpError(403, 'You can only track your own attendance.');
+  }
+}
+
 async function ensureRoleExists(client, roleId) {
   const result = await client.query(
     `SELECT id
@@ -155,6 +186,118 @@ function normalizeNullableString(value) {
   const normalized = String(value).trim();
 
   return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeAttendance(attendance) {
+  if (!attendance || typeof attendance !== 'object' || Array.isArray(attendance)) {
+    return {};
+  }
+
+  return attendance;
+}
+
+function getAttendanceRecords(attendance) {
+  return Array.isArray(attendance.records) ? attendance.records : [];
+}
+
+function buildAttendanceCheckIn(attendance, checkedInAt) {
+  const normalizedAttendance = normalizeAttendance(attendance);
+  const records = getAttendanceRecords(normalizedAttendance);
+  const openRecord = records.find((record) => record && !record.checkOut);
+
+  if (openRecord) {
+    throw new HttpError(409, 'Employee is already checked in.');
+  }
+
+  return {
+    ...normalizedAttendance,
+    records: [
+      ...records,
+      {
+        checkIn: checkedInAt,
+        checkOut: null,
+      },
+    ],
+    currentStatus: 'checked_in',
+    lastCheckInAt: checkedInAt,
+  };
+}
+
+function buildAttendanceCheckOut(attendance, checkedOutAt) {
+  const normalizedAttendance = normalizeAttendance(attendance);
+  const records = getAttendanceRecords(normalizedAttendance);
+  let openRecordIndex = -1;
+
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    if (records[index] && !records[index].checkOut) {
+      openRecordIndex = index;
+      break;
+    }
+  }
+
+  if (openRecordIndex === -1) {
+    throw new HttpError(409, 'Employee is not checked in.');
+  }
+
+  return {
+    ...normalizedAttendance,
+    records: records.map((record, index) =>
+      index === openRecordIndex
+        ? {
+            ...record,
+            checkOut: checkedOutAt,
+          }
+        : record
+    ),
+    currentStatus: 'checked_out',
+    lastCheckOutAt: checkedOutAt,
+  };
+}
+
+async function findEmployeeForAttendance(client, id) {
+  const result = await client.query(
+    `SELECT id, user_id, branch_id, attendance
+     FROM employees
+     WHERE id = $1
+       AND deleted_at IS NULL
+     FOR UPDATE`,
+    [Number(id)]
+  );
+
+  if (result.rowCount === 0) {
+    throw new HttpError(404, 'Employee not found.');
+  }
+
+  return result.rows[0];
+}
+
+async function findEmployeeDetailsById(client, id) {
+  const result = await client.query(
+    `SELECT e.id,
+            e.user_id,
+            e.role_id,
+            e.branch_id,
+            e.salary,
+            e.shift,
+            e.attendance,
+            e.status,
+            e.created_at,
+            e.updated_at,
+            u.name AS user_name,
+            u.email AS user_email,
+            u.status AS user_status,
+            r.name AS role_name,
+            b.name AS branch_name
+     FROM employees e
+     INNER JOIN users u ON u.id = e.user_id
+     INNER JOIN roles r ON r.id = e.role_id
+     INNER JOIN branches b ON b.id = e.branch_id
+     WHERE e.id = $1
+     LIMIT 1`,
+    [Number(id)]
+  );
+
+  return mapEmployeeRow(result.rows[0]);
 }
 
 async function createEmployee(
@@ -237,6 +380,55 @@ async function createEmployee(
   } finally {
     client.release();
   }
+}
+
+async function updateAttendance(requester, id, buildNextAttendance) {
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const existingEmployee = await findEmployeeForAttendance(client, id);
+
+    await ensureRequesterCanTrackAttendance(client, requester, existingEmployee);
+
+    const nextAttendance = buildNextAttendance(
+      existingEmployee.attendance,
+      new Date().toISOString()
+    );
+    const updateResult = await client.query(
+      `UPDATE employees
+       SET attendance = $2,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+         AND deleted_at IS NULL
+       RETURNING id`,
+      [Number(id), nextAttendance]
+    );
+
+    if (updateResult.rowCount === 0) {
+      throw new HttpError(404, 'Employee not found.');
+    }
+
+    const employee = await findEmployeeDetailsById(client, updateResult.rows[0].id);
+
+    await client.query('COMMIT');
+
+    return employee;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function checkInEmployee(requester, id) {
+  return updateAttendance(requester, id, buildAttendanceCheckIn);
+}
+
+async function checkOutEmployee(requester, id) {
+  return updateAttendance(requester, id, buildAttendanceCheckOut);
 }
 
 async function updateEmployee(
@@ -442,4 +634,12 @@ async function deleteEmployee(requester, id) {
   }
 }
 
-module.exports = { createEmployee, deleteEmployee, findAllForUser, mapEmployeeRow, updateEmployee };
+module.exports = {
+  checkInEmployee,
+  checkOutEmployee,
+  createEmployee,
+  deleteEmployee,
+  findAllForUser,
+  mapEmployeeRow,
+  updateEmployee,
+};

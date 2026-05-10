@@ -712,6 +712,323 @@ test(
 );
 
 test(
+  'checkInEmployee appends an open attendance record',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalConnect = database.pool.connect;
+    const queries = [];
+    let released = false;
+
+    t.after(() => {
+      database.pool.connect = originalConnect;
+    });
+
+    database.pool.connect = async () => ({
+      query: async (sql, params = []) => {
+        queries.push({ sql, params });
+
+        if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+          return { rowCount: 0, rows: [] };
+        }
+
+        if (/SELECT id, user_id, branch_id, attendance/.test(sql)) {
+          return {
+            rowCount: 1,
+            rows: [{ id: '21', user_id: '11', branch_id: '4', attendance: { records: [] } }],
+          };
+        }
+
+        if (/FROM roles/.test(sql)) {
+          return { rowCount: 1, rows: [{ name: 'admin' }] };
+        }
+
+        if (/UPDATE employees/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: '21' }] };
+        }
+
+        if (/SELECT e\.id/.test(sql)) {
+          return {
+            rowCount: 1,
+            rows: [
+              {
+                id: '21',
+                user_id: '11',
+                role_id: '3',
+                branch_id: '4',
+                salary: '45000.00',
+                shift: 'morning',
+                attendance: queries.find(({ sql: querySql }) => /UPDATE employees/.test(querySql))
+                  .params[1],
+                status: 'active',
+                created_at: new Date('2026-05-01T00:00:00.000Z'),
+                updated_at: new Date('2026-05-10T00:00:00.000Z'),
+                user_name: 'Cashier User',
+                user_email: 'cashier@example.com',
+                user_status: 'active',
+                role_name: 'cashier',
+                branch_name: 'Main',
+              },
+            ],
+          };
+        }
+
+        throw new Error(`Unexpected query: ${sql}`);
+      },
+      release: () => {
+        released = true;
+      },
+    });
+
+    const employee = await employeeService.checkInEmployee(
+      {
+        id: 1,
+        roleId: 1,
+        branchId: 2,
+      },
+      '21'
+    );
+    const findEmployeeQuery = queries.find(({ sql }) =>
+      /SELECT id, user_id, branch_id, attendance/.test(sql)
+    );
+    const updateEmployeeQuery = queries.find(({ sql }) => /UPDATE employees/.test(sql));
+
+    assert.equal(queries[0].sql, 'BEGIN');
+    assert.equal(queries.at(-1).sql, 'COMMIT');
+    assert.match(findEmployeeQuery.sql, /FOR UPDATE/);
+    assert.equal(updateEmployeeQuery.params[0], 21);
+    assert.equal(updateEmployeeQuery.params[1].currentStatus, 'checked_in');
+    assert.equal(updateEmployeeQuery.params[1].records.length, 1);
+    assert.equal(updateEmployeeQuery.params[1].records[0].checkOut, null);
+    assert.equal(employee.attendance.currentStatus, 'checked_in');
+    assert.equal(released, true);
+  }
+);
+
+test(
+  'checkInEmployee rejects employees that are already checked in',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalConnect = database.pool.connect;
+    const queries = [];
+
+    t.after(() => {
+      database.pool.connect = originalConnect;
+    });
+
+    database.pool.connect = async () => ({
+      query: async (sql, params = []) => {
+        queries.push({ sql, params });
+
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') {
+          return { rowCount: 0, rows: [] };
+        }
+
+        if (/SELECT id, user_id, branch_id, attendance/.test(sql)) {
+          return {
+            rowCount: 1,
+            rows: [
+              {
+                id: '21',
+                user_id: '11',
+                branch_id: '4',
+                attendance: { records: [{ checkIn: '2026-05-10T08:00:00.000Z', checkOut: null }] },
+              },
+            ],
+          };
+        }
+
+        if (/FROM roles/.test(sql)) {
+          return { rowCount: 1, rows: [{ name: 'admin' }] };
+        }
+
+        throw new Error('Employee update should not run when already checked in.');
+      },
+      release: () => {},
+    });
+
+    await assert.rejects(
+      () =>
+        employeeService.checkInEmployee(
+          {
+            id: 1,
+            roleId: 1,
+            branchId: 2,
+          },
+          '21'
+        ),
+      {
+        message: 'Employee is already checked in.',
+        statusCode: 409,
+      }
+    );
+
+    assert.equal(queries.at(-1).sql, 'ROLLBACK');
+  }
+);
+
+test(
+  'checkOutEmployee closes the latest open attendance record',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalConnect = database.pool.connect;
+    const queries = [];
+
+    t.after(() => {
+      database.pool.connect = originalConnect;
+    });
+
+    database.pool.connect = async () => ({
+      query: async (sql, params = []) => {
+        queries.push({ sql, params });
+
+        if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+          return { rowCount: 0, rows: [] };
+        }
+
+        if (/SELECT id, user_id, branch_id, attendance/.test(sql)) {
+          return {
+            rowCount: 1,
+            rows: [
+              {
+                id: '21',
+                user_id: '11',
+                branch_id: '4',
+                attendance: {
+                  records: [{ checkIn: '2026-05-10T08:00:00.000Z', checkOut: null }],
+                },
+              },
+            ],
+          };
+        }
+
+        if (/FROM roles/.test(sql)) {
+          return { rowCount: 1, rows: [{ name: 'cashier' }] };
+        }
+
+        if (/UPDATE employees/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: '21' }] };
+        }
+
+        if (/SELECT e\.id/.test(sql)) {
+          return {
+            rowCount: 1,
+            rows: [
+              {
+                id: '21',
+                user_id: '11',
+                role_id: '3',
+                branch_id: '4',
+                salary: '45000.00',
+                shift: 'morning',
+                attendance: queries.find(({ sql: querySql }) => /UPDATE employees/.test(querySql))
+                  .params[1],
+                status: 'active',
+                created_at: new Date('2026-05-01T00:00:00.000Z'),
+                updated_at: new Date('2026-05-10T00:00:00.000Z'),
+                user_name: 'Cashier User',
+                user_email: 'cashier@example.com',
+                user_status: 'active',
+                role_name: 'cashier',
+                branch_name: 'Main',
+              },
+            ],
+          };
+        }
+
+        throw new Error(`Unexpected query: ${sql}`);
+      },
+      release: () => {},
+    });
+
+    const employee = await employeeService.checkOutEmployee(
+      {
+        id: 11,
+        roleId: 3,
+        branchId: 4,
+      },
+      '21'
+    );
+    const updateEmployeeQuery = queries.find(({ sql }) => /UPDATE employees/.test(sql));
+
+    assert.equal(queries.at(-1).sql, 'COMMIT');
+    assert.equal(updateEmployeeQuery.params[1].currentStatus, 'checked_out');
+    assert.ok(updateEmployeeQuery.params[1].records[0].checkOut);
+    assert.equal(employee.attendance.currentStatus, 'checked_out');
+  }
+);
+
+test(
+  'checkOutEmployee restricts managers to their own branch',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalConnect = database.pool.connect;
+    const queries = [];
+
+    t.after(() => {
+      database.pool.connect = originalConnect;
+    });
+
+    database.pool.connect = async () => ({
+      query: async (sql, params = []) => {
+        queries.push({ sql, params });
+
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') {
+          return { rowCount: 0, rows: [] };
+        }
+
+        if (/SELECT id, user_id, branch_id, attendance/.test(sql)) {
+          return {
+            rowCount: 1,
+            rows: [{ id: '21', user_id: '11', branch_id: '8', attendance: { records: [] } }],
+          };
+        }
+
+        if (/FROM roles/.test(sql)) {
+          return { rowCount: 1, rows: [{ name: 'manager' }] };
+        }
+
+        throw new Error('Employee update should not run after authorization fails.');
+      },
+      release: () => {},
+    });
+
+    await assert.rejects(
+      () =>
+        employeeService.checkOutEmployee(
+          {
+            id: 2,
+            roleId: 2,
+            branchId: 7,
+          },
+          '21'
+        ),
+      {
+        message: 'Managers can only track attendance for their branch.',
+        statusCode: 403,
+      }
+    );
+
+    assert.equal(queries.at(-1).sql, 'ROLLBACK');
+  }
+);
+
+test(
   'updateEmployee rolls back duplicate user emails',
   {
     skip: !dependenciesAvailable,

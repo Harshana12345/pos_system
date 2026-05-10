@@ -76,4 +76,49 @@ async function deleteEmployee(req, res, next) {
   }
 }
 
-module.exports = { createEmployee, deleteEmployee, listEmployees, updateEmployee };
+async function checkInEmployee(req, res, next) {
+  const errors = validateEmployeeId(req.params.id);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const employee = await employeeService.checkInEmployee(req.user, req.params.id);
+
+    res.status(200).json({
+      data: employee,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function checkOutEmployee(req, res, next) {
+  const errors = validateEmployeeId(req.params.id);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const employee = await employeeService.checkOutEmployee(req.user, req.params.id);
+
+    res.status(200).json({
+      data: employee,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = {
+  checkInEmployee,
+  checkOutEmployee,
+  createEmployee,
+  deleteEmployee,
+  listEmployees,
+  updateEmployee,
+};
