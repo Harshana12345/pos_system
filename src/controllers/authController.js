@@ -7,6 +7,7 @@ const {
   validateRefreshPayload,
   validateRegisterPayload,
   validateResetPasswordPayload,
+  validateVerifyEmailPayload,
 } = require('../validators/authValidator');
 
 async function register(req, res, next) {
@@ -60,6 +61,26 @@ async function resetPassword(req, res, next) {
 
     res.status(200).json({
       message: 'Password has been reset.',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function verifyEmail(req, res, next) {
+  const errors = validateVerifyEmailPayload(req.body);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const user = await authService.verifyEmail(req.body);
+
+    res.status(200).json({
+      data: user,
+      message: 'Email address has been verified.',
     });
   } catch (error) {
     next(error);
@@ -121,4 +142,12 @@ async function logout(req, res, next) {
   }
 }
 
-module.exports = { forgotPassword, login, logout, refresh, register, resetPassword };
+module.exports = {
+  forgotPassword,
+  login,
+  logout,
+  refresh,
+  register,
+  resetPassword,
+  verifyEmail,
+};

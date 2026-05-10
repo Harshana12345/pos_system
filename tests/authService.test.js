@@ -501,6 +501,89 @@ test('resetPassword rejects invalid or expired reset tokens', {
   assert.equal(queryCount, 1);
 });
 
+test('verifyEmail validates the token and marks the user email verified', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const crypto = require('crypto');
+  const database = require('../src/config/database');
+  const authService = require('../src/services/authService');
+  const originalQuery = database.query;
+  const token = 'verification-token';
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const emailVerifiedAt = new Date('2026-05-10T02:00:00.000Z');
+  let verifySql;
+  let verifyParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    verifySql = sql;
+    verifyParams = params;
+
+    return {
+      rowCount: 1,
+      rows: [
+        {
+          id: '1',
+          name: 'Admin User',
+          email: 'admin@example.com',
+          role_id: '1',
+          branch_id: '2',
+          status: 'active',
+          email_verified_at: emailVerifiedAt,
+          created_at: new Date('2026-05-10T00:00:00.000Z'),
+          updated_at: new Date('2026-05-10T02:00:00.000Z'),
+        },
+      ],
+    };
+  };
+
+  const user = await authService.verifyEmail({
+    token: ` ${token} `,
+  });
+
+  assert.match(verifySql, /email_verification_tokens/);
+  assert.match(verifySql, /used_at IS NULL/);
+  assert.match(verifySql, /expires_at > CURRENT_TIMESTAMP/);
+  assert.match(verifySql, /email_verified_at = COALESCE/);
+  assert.match(verifySql, /used_at = CURRENT_TIMESTAMP/);
+  assert.equal(verifyParams[0], tokenHash);
+  assert.equal(user.id, '1');
+  assert.equal(user.email, 'admin@example.com');
+  assert.equal(user.emailVerifiedAt, emailVerifiedAt);
+  assert.equal(user.password, undefined);
+});
+
+test('verifyEmail rejects invalid or expired verification tokens', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const authService = require('../src/services/authService');
+  const originalQuery = database.query;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async () => ({
+    rowCount: 0,
+    rows: [],
+  });
+
+  await assert.rejects(
+    () =>
+      authService.verifyEmail({
+        token: 'bad-token',
+      }),
+    {
+      message: 'Invalid or expired verification token.',
+      statusCode: 400,
+    }
+  );
+});
+
 test('refreshAccessToken validates stored refresh token and returns a new access token', {
   skip: !dependenciesAvailable,
 }, async (t) => {

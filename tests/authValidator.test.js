@@ -8,6 +8,7 @@ const {
   validateRefreshPayload,
   validateRegisterPayload,
   validateResetPasswordPayload,
+  validateVerifyEmailPayload,
 } = require('../src/validators/authValidator');
 
 test('register payload validation requires expected fields', () => {
@@ -78,6 +79,20 @@ test('reset password payload validation accepts a token and valid password', () 
   const errors = validateResetPasswordPayload({
     token: 'reset-token',
     password: 'password123',
+  });
+
+  assert.deepEqual(errors, []);
+});
+
+test('verify email payload validation requires token', () => {
+  const errors = validateVerifyEmailPayload({});
+
+  assert.deepEqual(errors, ['Verification token is required.']);
+});
+
+test('verify email payload validation accepts a token', () => {
+  const errors = validateVerifyEmailPayload({
+    token: 'verification-token',
   });
 
   assert.deepEqual(errors, []);

@@ -18,6 +18,7 @@ function mapUserRow(row) {
     roleId: row.role_id,
     branchId: row.branch_id,
     status: row.status,
+    emailVerifiedAt: row.email_verified_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -254,6 +255,41 @@ async function resetPassword({ token, password }) {
   );
 }
 
+async function verifyEmail({ token }) {
+  const result = await database.query(
+    `WITH consumed_token AS (
+       UPDATE email_verification_tokens evt
+       SET used_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       FROM users u
+       WHERE u.id = evt.user_id
+         AND evt.token_hash = $1
+         AND evt.used_at IS NULL
+         AND evt.expires_at > CURRENT_TIMESTAMP
+         AND u.status = 'active'
+       RETURNING evt.user_id
+     ),
+     updated_user AS (
+       UPDATE users
+       SET email_verified_at = COALESCE(email_verified_at, CURRENT_TIMESTAMP),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = (SELECT user_id FROM consumed_token)
+       RETURNING id, name, email, role_id, branch_id, status,
+                 email_verified_at, created_at, updated_at
+     )
+     SELECT id, name, email, role_id, branch_id, status,
+            email_verified_at, created_at, updated_at
+     FROM updated_user`,
+    [hashToken(String(token).trim())]
+  );
+
+  if (result.rowCount === 0) {
+    throw new HttpError(400, 'Invalid or expired verification token.');
+  }
+
+  return mapUserRow(result.rows[0]);
+}
+
 async function refreshAccessToken(refreshToken) {
   let payload;
 
@@ -344,4 +380,5 @@ module.exports = {
   registerUser,
   requestPasswordReset,
   resetPassword,
+  verifyEmail,
 };

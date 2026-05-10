@@ -93,6 +93,16 @@ function validateResetPasswordPayload(payload) {
   return errors;
 }
 
+function validateVerifyEmailPayload(payload) {
+  const errors = [];
+
+  if (!hasValue(payload.token)) {
+    errors.push('Verification token is required.');
+  }
+
+  return errors;
+}
+
 function validateLogoutPayload(payload) {
   return validateRefreshPayload(payload);
 }
@@ -105,4 +115,5 @@ module.exports = {
   validateRefreshPayload,
   validateRegisterPayload,
   validateResetPasswordPayload,
+  validateVerifyEmailPayload,
 };
