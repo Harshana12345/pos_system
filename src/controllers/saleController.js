@@ -1,9 +1,11 @@
 const saleService = require('../services/saleService');
 const HttpError = require('../utils/httpError');
 const {
+  validateResumePayload,
   validateRefundPayload,
   validateSaleFilters,
   validateSalePayload,
+  validateSuspendedSalePayload,
 } = require('../validators/saleValidator');
 
 function isPositiveInteger(value) {
@@ -86,9 +88,49 @@ async function refundSale(req, res, next) {
   }
 }
 
+async function suspendSale(req, res, next) {
+  const errors = validateSuspendedSalePayload(req.body);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const sale = await saleService.suspendSale(req.user, req.body);
+
+    res.status(201).json({
+      data: sale,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function resumeSale(req, res, next) {
+  const errors = validateResumePayload(req.body);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const sale = await saleService.resumeSuspendedSale(req.user, req.body);
+
+    res.status(200).json({
+      data: sale,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   createSale,
   getSale,
   listSales,
   refundSale,
+  resumeSale,
+  suspendSale,
 };

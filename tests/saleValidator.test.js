@@ -2,9 +2,11 @@ const assert = require('node:assert');
 const test = require('node:test');
 
 const {
+  validateResumePayload,
   validateRefundPayload,
   validateSaleFilters,
   validateSalePayload,
+  validateSuspendedSalePayload,
 } = require('../src/validators/saleValidator');
 
 test('validateSaleFilters accepts supported sales query filters', () => {
@@ -112,6 +114,32 @@ test('validateSalePayload rejects invalid sale items', () => {
     'Sale item 1 discount amount must be a non-negative number.',
     'Sale item 2 details are required.',
   ]);
+});
+
+test('validateSuspendedSalePayload accepts sale draft without payment', () => {
+  const errors = validateSuspendedSalePayload({
+    customerId: '1',
+    branchId: '2',
+    discountAmount: '1.00',
+    taxAmount: '0.50',
+    items: [
+      {
+        productId: '10',
+        quantity: '2',
+        unitPrice: '9.50',
+      },
+    ],
+  });
+
+  assert.deepEqual(errors, []);
+});
+
+test('validateResumePayload requires a suspended sale ID', () => {
+  assert.deepEqual(validateResumePayload({ sale_id: '70' }), []);
+  assert.deepEqual(validateResumePayload({ saleId: 'sale' }), [
+    'Sale ID must be a positive integer.',
+  ]);
+  assert.deepEqual(validateResumePayload(null), ['Suspended sale details are required.']);
 });
 
 test('validateRefundPayload accepts a sale refund payload', () => {

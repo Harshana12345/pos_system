@@ -152,7 +152,13 @@ function validateSalePayload(payload) {
     return errors;
   }
 
-  payload.items.forEach((item, index) => {
+  validateSaleItems(payload.items, errors);
+
+  return errors;
+}
+
+function validateSaleItems(items, errors) {
+  items.forEach((item, index) => {
     const label = `Sale item ${index + 1}`;
 
     if (!isPlainObject(item)) {
@@ -187,8 +193,54 @@ function validateSalePayload(payload) {
       errors.push(`${label} discount amount must be a non-negative number.`);
     }
   });
+}
+
+function validateSuspendedSalePayload(payload) {
+  const errors = [];
+
+  if (!isPlainObject(payload)) {
+    return ['Sale details are required.'];
+  }
+
+  const customerId = payload.customerId ?? payload.customer_id;
+  const branchId = payload.branchId ?? payload.branch_id;
+
+  if (customerId !== undefined && customerId !== null && customerId !== '') {
+    if (!isPositiveInteger(customerId)) {
+      errors.push('Customer ID must be a positive integer.');
+    }
+  }
+
+  if (!isPositiveInteger(branchId)) {
+    errors.push('Branch ID must be a positive integer.');
+  }
+
+  if (!isNonNegativeNumber(payload.discountAmount ?? payload.discount_amount ?? 0)) {
+    errors.push('Sale discount amount must be a non-negative number.');
+  }
+
+  if (!isNonNegativeNumber(payload.taxAmount ?? payload.tax_amount ?? 0)) {
+    errors.push('Sale tax amount must be a non-negative number.');
+  }
+
+  if (!Array.isArray(payload.items) || payload.items.length === 0) {
+    errors.push('At least one sale item is required.');
+    return errors;
+  }
+
+  validateSaleItems(payload.items, errors);
 
   return errors;
+}
+
+function validateResumePayload(payload) {
+  if (!isPlainObject(payload)) {
+    return ['Suspended sale details are required.'];
+  }
+
+  const saleId = payload.saleId ?? payload.sale_id;
+
+  return isPositiveInteger(saleId) ? [] : ['Sale ID must be a positive integer.'];
 }
 
 function validateRefundPayload(payload) {
@@ -252,7 +304,9 @@ function validateRefundPayload(payload) {
 }
 
 module.exports = {
+  validateResumePayload,
   validateRefundPayload,
   validateSaleFilters,
   validateSalePayload,
+  validateSuspendedSalePayload,
 };

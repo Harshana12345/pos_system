@@ -59,6 +59,45 @@ function normalizeSaleFilters(filters = {}) {
 }
 
 function normalizeSalePayload(payload) {
+  const draft = normalizeSaleDraftPayload(payload);
+  const paidAmount = roundCurrency(
+    Number(payload.paidAmount ?? payload.paid_amount ?? payload.payment?.amount)
+  );
+
+  if (!Number.isFinite(paidAmount) || paidAmount <= 0) {
+    throw new HttpError(400, 'Paid amount must be a positive number.');
+  }
+
+  if (paidAmount < draft.totalAmount) {
+    throw new HttpError(400, 'Paid amount must cover the completed sale total.');
+  }
+
+  return {
+    ...draft,
+    paidAmount,
+    balanceAmount: roundCurrency(Math.max(draft.totalAmount - paidAmount, 0)),
+    payment: {
+      amount: paidAmount,
+      method: normalizeNullableString(
+        payload.paymentMethod ?? payload.payment_method ?? payload.payment?.method
+      ),
+      referenceNumber: normalizeNullableString(
+        payload.paymentReferenceNumber ??
+          payload.payment_reference_number ??
+          payload.payment?.referenceNumber ??
+          payload.payment?.reference_number
+      ),
+      notes: normalizeNullableString(
+        payload.paymentNotes ?? payload.payment_notes ?? payload.payment?.notes
+      ),
+      paidAt: normalizePaymentDate(
+        payload.paidAt ?? payload.paid_at ?? payload.payment?.paidAt
+      ),
+    },
+  };
+}
+
+function normalizeSaleDraftPayload(payload) {
   const items = payload.items.map((item) => {
     const quantity = Number(item.quantity);
     const unitPrice = Number(item.unitPrice ?? item.unit_price);
@@ -87,20 +126,9 @@ function normalizeSalePayload(payload) {
   );
   const taxAmount = roundCurrency(Number(payload.taxAmount ?? payload.tax_amount ?? 0));
   const totalAmount = roundCurrency(subtotal - discountAmount + taxAmount);
-  const paidAmount = roundCurrency(
-    Number(payload.paidAmount ?? payload.paid_amount ?? payload.payment?.amount)
-  );
 
   if (totalAmount < 0) {
     throw new HttpError(400, 'Sale discount cannot exceed sale subtotal plus tax.');
-  }
-
-  if (!Number.isFinite(paidAmount) || paidAmount <= 0) {
-    throw new HttpError(400, 'Paid amount must be a positive number.');
-  }
-
-  if (paidAmount < totalAmount) {
-    throw new HttpError(400, 'Paid amount must cover the completed sale total.');
   }
 
   return {
@@ -110,26 +138,6 @@ function normalizeSalePayload(payload) {
     discountAmount,
     taxAmount,
     totalAmount,
-    paidAmount,
-    balanceAmount: roundCurrency(Math.max(totalAmount - paidAmount, 0)),
-    payment: {
-      amount: paidAmount,
-      method: normalizeNullableString(
-        payload.paymentMethod ?? payload.payment_method ?? payload.payment?.method
-      ),
-      referenceNumber: normalizeNullableString(
-        payload.paymentReferenceNumber ??
-          payload.payment_reference_number ??
-          payload.payment?.referenceNumber ??
-          payload.payment?.reference_number
-      ),
-      notes: normalizeNullableString(
-        payload.paymentNotes ?? payload.payment_notes ?? payload.payment?.notes
-      ),
-      paidAt: normalizePaymentDate(
-        payload.paidAt ?? payload.paid_at ?? payload.payment?.paidAt
-      ),
-    },
     items,
   };
 }
@@ -562,6 +570,183 @@ async function createCompletedSale(requester, payload) {
   }
 }
 
+async function suspendSale(requester, payload) {
+  const normalized = normalizeSaleDraftPayload(payload);
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const saleResult = await client.query(
+      `INSERT INTO sales (
+         customer_id,
+         branch_id,
+         status,
+         subtotal,
+         discount_amount,
+         tax_amount,
+         total_amount,
+         paid_amount,
+         balance_amount,
+         payment_status,
+         created_by
+       )
+       VALUES ($1, $2, 'suspended', $3, $4, $5, $6, 0, $6, 'unpaid', $7)
+       RETURNING id,
+                 customer_id,
+                 branch_id,
+                 status,
+                 subtotal,
+                 discount_amount,
+                 tax_amount,
+                 total_amount,
+                 paid_amount,
+                 balance_amount,
+                 payment_status,
+                 created_by,
+                 created_at`,
+      [
+        normalized.customerId,
+        normalized.branchId,
+        normalized.subtotal,
+        normalized.discountAmount,
+        normalized.taxAmount,
+        normalized.totalAmount,
+        requester?.id ?? null,
+      ]
+    );
+    const saleId = saleResult.rows[0].id;
+    const itemValues = [];
+    const itemPlaceholders = normalized.items.map((item, index) => {
+      const offset = index * 7;
+
+      itemValues.push(
+        saleId,
+        item.productId,
+        item.variantId,
+        item.quantity,
+        item.unitPrice,
+        item.discountAmount,
+        item.lineTotal
+      );
+
+      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`;
+    });
+    const itemResult = await client.query(
+      `INSERT INTO sale_items (
+         sale_id,
+         product_id,
+         variant_id,
+         quantity,
+         unit_price,
+         discount_amount,
+         line_total
+       )
+       VALUES ${itemPlaceholders.join(', ')}
+       RETURNING id,
+                 sale_id,
+                 product_id,
+                 variant_id,
+                 quantity,
+                 unit_price,
+                 discount_amount,
+                 line_total`,
+      itemValues
+    );
+
+    await client.query('COMMIT');
+
+    return mapSaleRow(saleResult.rows[0], itemResult.rows.map(mapSaleItemRow));
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    throw mapForeignKeyError(error);
+  } finally {
+    client.release();
+  }
+}
+
+async function resumeSuspendedSale(_requester, payload) {
+  const saleId = Number(payload.saleId ?? payload.sale_id);
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const saleResult = await client.query(
+      `SELECT id,
+              customer_id,
+              branch_id,
+              status,
+              subtotal,
+              discount_amount,
+              tax_amount,
+              total_amount,
+              paid_amount,
+              balance_amount,
+              payment_status,
+              created_by,
+              created_at
+       FROM sales
+       WHERE id = $1
+       FOR UPDATE`,
+      [saleId]
+    );
+
+    if (saleResult.rowCount === 0) {
+      throw new HttpError(404, 'Suspended sale not found.');
+    }
+
+    if (saleResult.rows[0].status !== 'suspended') {
+      throw new HttpError(400, 'Sale is not suspended.');
+    }
+
+    const resumedSaleResult = await client.query(
+      `UPDATE sales
+       SET status = 'resumed'
+       WHERE id = $1
+       RETURNING id,
+                 customer_id,
+                 branch_id,
+                 status,
+                 subtotal,
+                 discount_amount,
+                 tax_amount,
+                 total_amount,
+                 paid_amount,
+                 balance_amount,
+                 payment_status,
+                 created_by,
+                 created_at`,
+      [saleId]
+    );
+    const itemResult = await client.query(
+      `SELECT id,
+              sale_id,
+              product_id,
+              variant_id,
+              quantity,
+              unit_price,
+              discount_amount,
+              line_total
+       FROM sale_items
+       WHERE sale_id = $1
+       ORDER BY id ASC`,
+      [saleId]
+    );
+
+    await client.query('COMMIT');
+
+    return mapSaleRow(resumedSaleResult.rows[0], itemResult.rows.map(mapSaleItemRow));
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function processRefund(requester, payload) {
   const normalized = normalizeRefundPayload(payload);
   const client = await database.pool.connect();
@@ -891,6 +1076,9 @@ module.exports = {
   mapSaleRow,
   normalizeRefundPayload,
   normalizeSaleFilters,
+  normalizeSaleDraftPayload,
   normalizeSalePayload,
   processRefund,
+  resumeSuspendedSale,
+  suspendSale,
 };

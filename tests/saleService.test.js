@@ -530,6 +530,243 @@ test('createCompletedSale rejects underpayment before opening a transaction', {
   );
 });
 
+test('suspendSale stores a sale draft without payment or inventory movement', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const saleService = require('../src/services/saleService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/INSERT INTO sales/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '72',
+              customer_id: params[0],
+              branch_id: params[1],
+              status: 'suspended',
+              subtotal: params[2],
+              discount_amount: params[3],
+              tax_amount: params[4],
+              total_amount: params[5],
+              paid_amount: '0.00',
+              balance_amount: params[5],
+              payment_status: 'unpaid',
+              created_by: params[6],
+              created_at: new Date('2026-05-10T00:04:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/INSERT INTO sale_items/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '92',
+              sale_id: params[0],
+              product_id: params[1],
+              variant_id: params[2],
+              quantity: params[3],
+              unit_price: params[4],
+              discount_amount: params[5],
+              line_total: params[6],
+            },
+          ],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  const sale = await saleService.suspendSale(
+    { id: 42 },
+    {
+      customerId: '1',
+      branchId: '2',
+      discountAmount: '1.00',
+      taxAmount: '0.50',
+      items: [
+        {
+          productId: '10',
+          variantId: '5',
+          quantity: '2',
+          unitPrice: '9.50',
+        },
+      ],
+    }
+  );
+
+  assert.deepEqual(
+    queries.map(({ sql }) => sql),
+    ['BEGIN', queries[1].sql, queries[2].sql, 'COMMIT']
+  );
+  assert.match(queries[1].sql, /'suspended'/);
+  assert.match(queries[1].sql, /'unpaid'/);
+  assert.deepEqual(queries[1].params, [1, 2, 19, 1, 0.5, 18.5, 42]);
+  assert.deepEqual(queries[2].params, ['72', 10, 5, 2, 9.5, 0, 19]);
+  assert.equal(queries.some(({ sql }) => /INSERT INTO sale_payments/.test(sql)), false);
+  assert.equal(queries.some(({ sql }) => /UPDATE inventory/.test(sql)), false);
+  assert.equal(sale.status, 'suspended');
+  assert.equal(sale.totalAmount, 18.5);
+  assert.equal(sale.balanceAmount, 18.5);
+  assert.equal(sale.items.length, 1);
+});
+
+test('resumeSuspendedSale marks suspended sale as resumed and returns items', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const saleService = require('../src/services/saleService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/FROM sales/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '72',
+              customer_id: '1',
+              branch_id: '2',
+              status: 'suspended',
+              subtotal: '19.00',
+              discount_amount: '1.00',
+              tax_amount: '0.50',
+              total_amount: '18.50',
+              paid_amount: '0.00',
+              balance_amount: '18.50',
+              payment_status: 'unpaid',
+              created_by: '42',
+              created_at: new Date('2026-05-10T00:04:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/UPDATE sales/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '72',
+              customer_id: '1',
+              branch_id: '2',
+              status: 'resumed',
+              subtotal: '19.00',
+              discount_amount: '1.00',
+              tax_amount: '0.50',
+              total_amount: '18.50',
+              paid_amount: '0.00',
+              balance_amount: '18.50',
+              payment_status: 'unpaid',
+              created_by: '42',
+              created_at: new Date('2026-05-10T00:04:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/FROM sale_items/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '92',
+              sale_id: '72',
+              product_id: '10',
+              variant_id: '5',
+              quantity: '2',
+              unit_price: '9.50',
+              discount_amount: '0.00',
+              line_total: '19.00',
+            },
+          ],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  const sale = await saleService.resumeSuspendedSale({ id: 42 }, { sale_id: '72' });
+
+  assert.deepEqual(
+    queries.map(({ sql }) => sql),
+    ['BEGIN', queries[1].sql, queries[2].sql, queries[3].sql, 'COMMIT']
+  );
+  assert.match(queries[1].sql, /FOR UPDATE/);
+  assert.deepEqual(queries[1].params, [72]);
+  assert.match(queries[2].sql, /SET status = 'resumed'/);
+  assert.deepEqual(queries[2].params, [72]);
+  assert.match(queries[3].sql, /ORDER BY id ASC/);
+  assert.equal(sale.status, 'resumed');
+  assert.equal(sale.items.length, 1);
+  assert.equal(sale.items[0].productId, '10');
+});
+
+test('resumeSuspendedSale rejects sales that are not suspended', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const saleService = require('../src/services/saleService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/FROM sales/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [{ id: params[0], status: 'completed' }],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  await assert.rejects(() => saleService.resumeSuspendedSale(null, { saleId: '70' }), {
+    statusCode: 400,
+    message: 'Sale is not suspended.',
+  });
+
+  assert.equal(queries.some(({ sql }) => /UPDATE sales/.test(sql)), false);
+  assert.equal(queries.at(-1).sql, 'ROLLBACK');
+});
+
 test('processRefund logs refund, restocks inventory, and updates sale status', {
   skip: !dependenciesAvailable,
 }, async (t) => {
