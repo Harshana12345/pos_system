@@ -3,6 +3,7 @@ const HttpError = require('../utils/httpError');
 const {
   validateCreateEmployeePayload,
   validateEmployeeId,
+  validateShiftPayload,
   validateUpdateEmployeePayload,
 } = require('../validators/employeeValidator');
 
@@ -76,6 +77,52 @@ async function deleteEmployee(req, res, next) {
   }
 }
 
+async function assignEmployeeShift(req, res, next) {
+  const errors = [...validateEmployeeId(req.params.id), ...validateShiftPayload(req.body)];
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const employee = await employeeService.assignEmployeeShift(
+      req.user,
+      req.params.id,
+      req.body.shift
+    );
+
+    res.status(200).json({
+      data: employee,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function updateEmployeeShift(req, res, next) {
+  const errors = [...validateEmployeeId(req.params.id), ...validateShiftPayload(req.body)];
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const employee = await employeeService.updateEmployeeShift(
+      req.user,
+      req.params.id,
+      req.body.shift
+    );
+
+    res.status(200).json({
+      data: employee,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function checkInEmployee(req, res, next) {
   const errors = validateEmployeeId(req.params.id);
 
@@ -115,10 +162,12 @@ async function checkOutEmployee(req, res, next) {
 }
 
 module.exports = {
+  assignEmployeeShift,
   checkInEmployee,
   checkOutEmployee,
   createEmployee,
   deleteEmployee,
   listEmployees,
   updateEmployee,
+  updateEmployeeShift,
 };

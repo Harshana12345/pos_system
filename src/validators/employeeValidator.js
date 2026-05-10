@@ -1,5 +1,6 @@
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 8;
+const MAX_SHIFT_LENGTH = 100;
 const VALID_EMPLOYEE_STATUSES = new Set(['active', 'inactive']);
 
 function hasValue(value) {
@@ -130,9 +131,29 @@ function validateUpdateEmployeePayload(payload) {
   return errors;
 }
 
+function validateShiftPayload(payload) {
+  const errors = [];
+
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return ['Shift details are required.'];
+  }
+
+  if (!hasValue(payload.shift)) {
+    errors.push('Shift is required.');
+  } else if (typeof payload.shift !== 'string') {
+    errors.push('Shift must be a string.');
+  } else if (payload.shift.trim().length > MAX_SHIFT_LENGTH) {
+    errors.push(`Shift must be ${MAX_SHIFT_LENGTH} characters or fewer.`);
+  }
+
+  return errors;
+}
+
 module.exports = {
+  MAX_SHIFT_LENGTH,
   MIN_PASSWORD_LENGTH,
   validateCreateEmployeePayload,
   validateEmployeeId,
+  validateShiftPayload,
   validateUpdateEmployeePayload,
 };

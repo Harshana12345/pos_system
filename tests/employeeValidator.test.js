@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   validateCreateEmployeePayload,
   validateEmployeeId,
+  validateShiftPayload,
   validateUpdateEmployeePayload,
 } = require('../src/validators/employeeValidator');
 
@@ -85,4 +86,10 @@ test('update employee payload validation accepts valid fields', () => {
   });
 
   assert.deepEqual(errors, []);
+});
+
+test('shift payload validation requires a non-empty shift string', () => {
+  assert.deepEqual(validateShiftPayload({}), ['Shift is required.']);
+  assert.deepEqual(validateShiftPayload({ shift: 123 }), ['Shift must be a string.']);
+  assert.deepEqual(validateShiftPayload({ shift: ' morning ' }), []);
 });

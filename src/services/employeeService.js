@@ -117,6 +117,29 @@ async function ensureRequesterCanDeleteEmployee(client, requester, branchId) {
   }
 }
 
+async function ensureRequesterCanManageEmployeeShift(client, requester, branchId) {
+  const result = await client.query(
+    `SELECT name
+     FROM roles
+     WHERE id = $1
+     LIMIT 1`,
+    [Number(requester.roleId)]
+  );
+  const requesterRoleName = result.rows[0]?.name;
+
+  if (!requesterRoleName) {
+    throw new HttpError(403, 'Authenticated user role is not recognized.');
+  }
+
+  if (!['admin', 'manager'].includes(requesterRoleName)) {
+    throw new HttpError(403, 'You are not allowed to manage employee shifts.');
+  }
+
+  if (requesterRoleName === 'manager' && Number(requester.branchId) !== Number(branchId)) {
+    throw new HttpError(403, 'Managers can only manage shifts for their branch.');
+  }
+}
+
 async function ensureRequesterCanTrackAttendance(client, requester, employee) {
   const result = await client.query(
     `SELECT name
@@ -300,6 +323,23 @@ async function findEmployeeDetailsById(client, id) {
   return mapEmployeeRow(result.rows[0]);
 }
 
+async function findEmployeeForShiftUpdate(client, id) {
+  const result = await client.query(
+    `SELECT id, branch_id, shift
+     FROM employees
+     WHERE id = $1
+       AND deleted_at IS NULL
+     FOR UPDATE`,
+    [Number(id)]
+  );
+
+  if (result.rowCount === 0) {
+    throw new HttpError(404, 'Employee not found.');
+  }
+
+  return result.rows[0];
+}
+
 async function createEmployee(
   requester,
   { name, email, password, roleId, branchId, salary, shift, attendance, status }
@@ -429,6 +469,55 @@ async function checkInEmployee(requester, id) {
 
 async function checkOutEmployee(requester, id) {
   return updateAttendance(requester, id, buildAttendanceCheckOut);
+}
+
+async function setEmployeeShift(requester, id, shift, { requireUnassigned } = {}) {
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const existingEmployee = await findEmployeeForShiftUpdate(client, id);
+
+    await ensureRequesterCanManageEmployeeShift(client, requester, existingEmployee.branch_id);
+
+    if (requireUnassigned && normalizeNullableString(existingEmployee.shift)) {
+      throw new HttpError(409, 'Employee already has an assigned shift.');
+    }
+
+    const employeeResult = await client.query(
+      `UPDATE employees
+       SET shift = $2,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+         AND deleted_at IS NULL
+       RETURNING id`,
+      [Number(id), normalizeNullableString(shift)]
+    );
+
+    if (employeeResult.rowCount === 0) {
+      throw new HttpError(404, 'Employee not found.');
+    }
+
+    const employee = await findEmployeeDetailsById(client, employeeResult.rows[0].id);
+
+    await client.query('COMMIT');
+
+    return employee;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function assignEmployeeShift(requester, id, shift) {
+  return setEmployeeShift(requester, id, shift, { requireUnassigned: true });
+}
+
+async function updateEmployeeShift(requester, id, shift) {
+  return setEmployeeShift(requester, id, shift);
 }
 
 async function updateEmployee(
@@ -635,6 +724,7 @@ async function deleteEmployee(requester, id) {
 }
 
 module.exports = {
+  assignEmployeeShift,
   checkInEmployee,
   checkOutEmployee,
   createEmployee,
@@ -642,4 +732,5 @@ module.exports = {
   findAllForUser,
   mapEmployeeRow,
   updateEmployee,
+  updateEmployeeShift,
 };
