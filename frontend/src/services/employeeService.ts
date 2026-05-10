@@ -41,10 +41,46 @@ type EmployeeListResponse = {
   data: Employee[];
 };
 
+type EmployeeResponse = {
+  data: Employee;
+};
+
+export type EmployeePayload = {
+  name: string;
+  email: string;
+  roleId: number;
+  branchId: number;
+  salary?: number;
+  shift?: string | null;
+  attendance?: Employee['attendance'];
+  status: string;
+  password?: string;
+};
+
 export function listEmployees(accessToken: string) {
   return apiRequest<EmployeeListResponse>('/employees', {
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },
+  });
+}
+
+export function createEmployee(accessToken: string, payload: EmployeePayload) {
+  return apiRequest<EmployeeResponse>('/employees', {
+    body: JSON.stringify(payload),
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    method: 'POST',
+  });
+}
+
+export function updateEmployee(accessToken: string, employeeId: number, payload: EmployeePayload) {
+  return apiRequest<EmployeeResponse>(`/employees/${employeeId}`, {
+    body: JSON.stringify(payload),
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    method: 'PUT',
   });
 }

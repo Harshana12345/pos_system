@@ -1,14 +1,59 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { MainLayout } from '@/layouts/MainLayout';
 import { ApiError } from '@/services/apiClient';
-import { listEmployees, type Employee } from '@/services/employeeService';
+import {
+  createEmployee,
+  listEmployees,
+  updateEmployee,
+  type Employee,
+  type EmployeePayload,
+} from '@/services/employeeService';
 
 type EmployeeListPageProps = {
   accessToken: string;
+  userBranchId?: number;
   userName?: string;
 };
 
 const PAGE_SIZE = 8;
+const STATUS_OPTIONS = [
+  { label: 'Active', value: 'active' },
+  { label: 'Inactive', value: 'inactive' },
+];
+const SEEDED_ROLE_OPTIONS = [
+  { id: 1, name: 'admin' },
+  { id: 2, name: 'manager' },
+  { id: 3, name: 'cashier' },
+  { id: 4, name: 'inventory_manager' },
+];
+const SEEDED_BRANCH_OPTIONS = [{ id: 1, name: 'Default Branch' }];
+
+type SelectOption = {
+  id: number;
+  name: string;
+};
+
+type EmployeeFormValues = {
+  name: string;
+  email: string;
+  password: string;
+  roleId: string;
+  branchId: string;
+  salary: string;
+  shift: string;
+  status: string;
+};
+
+const EMPTY_FORM_VALUES: EmployeeFormValues = {
+  name: '',
+  email: '',
+  password: '',
+  roleId: '',
+  branchId: '',
+  salary: '',
+  shift: '',
+  status: 'active',
+};
 
 function formatCurrency(value: Employee['salary']) {
   const amount = Number(value);
@@ -56,12 +101,45 @@ function getSearchText(employee: Employee) {
     .toLowerCase();
 }
 
-export function EmployeeListPage({ accessToken, userName }: EmployeeListPageProps) {
+function uniqueOptions(options: SelectOption[]) {
+  const optionMap = new Map<number, SelectOption>();
+
+  options.forEach((option) => {
+    if (!optionMap.has(option.id)) {
+      optionMap.set(option.id, option);
+    }
+  });
+
+  return Array.from(optionMap.values()).sort((first, second) =>
+    first.name.localeCompare(second.name),
+  );
+}
+
+function getFormValues(employee: Employee): EmployeeFormValues {
+  return {
+    name: employee.user.name,
+    email: employee.user.email,
+    password: '',
+    roleId: String(employee.roleId),
+    branchId: String(employee.branchId),
+    salary: String(employee.salary ?? ''),
+    shift: employee.shift ?? '',
+    status: employee.status,
+  };
+}
+
+export function EmployeeListPage({ accessToken, userBranchId, userName }: EmployeeListPageProps) {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [formValues, setFormValues] = useState<EmployeeFormValues>(EMPTY_FORM_VALUES);
+  const [formError, setFormError] = useState('');
+  const [formSuccess, setFormSuccess] = useState('');
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -122,6 +200,139 @@ export function EmployeeListPage({ accessToken, userName }: EmployeeListPageProp
     setPage(1);
   }
 
+  const roleOptions = useMemo(
+    () => uniqueOptions([...SEEDED_ROLE_OPTIONS, ...employees.map((employee) => employee.role)]),
+    [employees],
+  );
+  const branchOptions = useMemo(
+    () => {
+      const fallbackBranchOptions = userBranchId
+        ? [
+            {
+              id: userBranchId,
+              name: userBranchId === 1 ? 'Default Branch' : `Branch ${userBranchId}`,
+            },
+          ]
+        : SEEDED_BRANCH_OPTIONS;
+
+      return uniqueOptions([
+        ...fallbackBranchOptions,
+        ...employees.map((employee) => employee.branch),
+      ]);
+    },
+    [employees, userBranchId],
+  );
+
+  function openCreateForm() {
+    setEditingEmployee(null);
+    setFormValues({
+      ...EMPTY_FORM_VALUES,
+      branchId: branchOptions.length === 1 ? String(branchOptions[0].id) : '',
+      roleId: roleOptions.length === 1 ? String(roleOptions[0].id) : '',
+    });
+    setFormError('');
+    setFormSuccess('');
+    setIsFormOpen(true);
+  }
+
+  function openEditForm(employee: Employee) {
+    setEditingEmployee(employee);
+    setFormValues(getFormValues(employee));
+    setFormError('');
+    setFormSuccess('');
+    setIsFormOpen(true);
+  }
+
+  function closeForm() {
+    setEditingEmployee(null);
+    setFormValues(EMPTY_FORM_VALUES);
+    setFormError('');
+    setIsFormOpen(false);
+  }
+
+  function updateFormValue(field: keyof EmployeeFormValues, value: string) {
+    setFormValues((currentValues) => ({
+      ...currentValues,
+      [field]: value,
+    }));
+  }
+
+  function buildPayload(): EmployeePayload | null {
+    const name = formValues.name.trim();
+    const email = formValues.email.trim();
+    const roleId = Number(formValues.roleId);
+    const branchId = Number(formValues.branchId);
+    const salary = formValues.salary.trim() === '' ? 0 : Number(formValues.salary);
+
+    if (!name || !email || !Number.isInteger(roleId) || !Number.isInteger(branchId)) {
+      setFormError('Name, email, role, and branch are required.');
+      return null;
+    }
+
+    if (!editingEmployee && formValues.password.length < 8) {
+      setFormError('Password must be at least 8 characters.');
+      return null;
+    }
+
+    if (!Number.isFinite(salary) || salary < 0) {
+      setFormError('Salary must be a non-negative number.');
+      return null;
+    }
+
+    return {
+      attendance: editingEmployee?.attendance ?? {},
+      branchId,
+      email,
+      name,
+      roleId,
+      salary,
+      shift: formValues.shift.trim() || null,
+      status: formValues.status,
+      ...(editingEmployee ? {} : { password: formValues.password }),
+    };
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError('');
+    setFormSuccess('');
+
+    const payload = buildPayload();
+
+    if (!payload) {
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      const response = editingEmployee
+        ? await updateEmployee(accessToken, editingEmployee.id, payload)
+        : await createEmployee(accessToken, payload);
+
+      setEmployees((currentEmployees) => {
+        if (editingEmployee) {
+          return currentEmployees.map((employee) =>
+            employee.id === response.data.id ? response.data : employee,
+          );
+        }
+
+        return [...currentEmployees, response.data].sort((first, second) => first.id - second.id);
+      });
+      setFormSuccess(editingEmployee ? 'Employee updated.' : 'Employee created.');
+      setEditingEmployee(response.data);
+      setFormValues(getFormValues(response.data));
+    } catch (saveError) {
+      if (saveError instanceof ApiError) {
+        setFormError(saveError.message);
+      } else {
+        setFormError('Unable to save employee. Check your connection and try again.');
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   return (
     <MainLayout>
       <section className="page-header employee-header">
@@ -138,6 +349,174 @@ export function EmployeeListPage({ accessToken, userName }: EmployeeListPageProp
           <span>{employees.length}</span>
           <p>Total employees</p>
         </div>
+      </section>
+
+      <section className="form-panel" aria-labelledby="employee-form-title">
+        <div className="form-panel-header">
+          <div>
+            <h2 id="employee-form-title">
+              {isFormOpen
+                ? editingEmployee
+                  ? 'Edit Employee'
+                  : 'Create Employee'
+                : 'Manage Employee'}
+            </h2>
+            <p>
+              {isFormOpen
+                ? 'Set profile details, assignment, compensation, and account status.'
+                : 'Create a staff account or edit an existing employee from the directory.'}
+            </p>
+          </div>
+          {isFormOpen ? (
+            <button className="secondary-action" onClick={closeForm} type="button">
+              Close
+            </button>
+          ) : (
+            <button
+              className="primary-action compact-action"
+              onClick={openCreateForm}
+              type="button"
+            >
+              New Employee
+            </button>
+          )}
+        </div>
+
+        {isFormOpen ? (
+          <form className="employee-form" onSubmit={handleSubmit}>
+            <label className="field" htmlFor="employee-name">
+              Name
+              <input
+                id="employee-name"
+                onChange={(event) => updateFormValue('name', event.target.value)}
+                required
+                type="text"
+                value={formValues.name}
+              />
+            </label>
+
+            <label className="field" htmlFor="employee-email">
+              Email
+              <input
+                id="employee-email"
+                onChange={(event) => updateFormValue('email', event.target.value)}
+                required
+                type="email"
+                value={formValues.email}
+              />
+            </label>
+
+            {!editingEmployee ? (
+              <label className="field" htmlFor="employee-password">
+                Password
+                <input
+                  id="employee-password"
+                  minLength={8}
+                  onChange={(event) => updateFormValue('password', event.target.value)}
+                  required
+                  type="password"
+                  value={formValues.password}
+                />
+              </label>
+            ) : null}
+
+            <label className="field" htmlFor="employee-role">
+              Role
+              <select
+                id="employee-role"
+                onChange={(event) => updateFormValue('roleId', event.target.value)}
+                required
+                value={formValues.roleId}
+              >
+                <option value="">Select role</option>
+                {roleOptions.map((role) => (
+                  <option key={role.id} value={role.id}>
+                    {formatLabel(role.name)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field" htmlFor="employee-branch">
+              Branch
+              <select
+                id="employee-branch"
+                onChange={(event) => updateFormValue('branchId', event.target.value)}
+                required
+                value={formValues.branchId}
+              >
+                <option value="">Select branch</option>
+                {branchOptions.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field" htmlFor="employee-status">
+              Status
+              <select
+                id="employee-status"
+                onChange={(event) => updateFormValue('status', event.target.value)}
+                required
+                value={formValues.status}
+              >
+                {STATUS_OPTIONS.map((status) => (
+                  <option key={status.value} value={status.value}>
+                    {status.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field" htmlFor="employee-salary">
+              Salary
+              <input
+                id="employee-salary"
+                min="0"
+                onChange={(event) => updateFormValue('salary', event.target.value)}
+                step="0.01"
+                type="number"
+                value={formValues.salary}
+              />
+            </label>
+
+            <label className="field" htmlFor="employee-shift">
+              Shift
+              <input
+                id="employee-shift"
+                onChange={(event) => updateFormValue('shift', event.target.value)}
+                placeholder="Morning, evening, weekend"
+                type="text"
+                value={formValues.shift}
+              />
+            </label>
+
+            {formError ? (
+              <div className="form-alert employee-form-alert" role="alert">
+                {formError}
+              </div>
+            ) : null}
+
+            {formSuccess ? (
+              <div className="form-alert form-alert-success employee-form-alert" role="status">
+                {formSuccess}
+              </div>
+            ) : null}
+
+            <div className="form-actions">
+              <button className="primary-action" disabled={isSaving} type="submit">
+                {isSaving ? 'Saving...' : editingEmployee ? 'Save Changes' : 'Create Employee'}
+              </button>
+              {editingEmployee ? (
+                <button className="secondary-action" onClick={openCreateForm} type="button">
+                  Create New
+                </button>
+              ) : null}
+            </div>
+          </form>
+        ) : null}
       </section>
 
       <section className="table-panel" aria-labelledby="employee-table-title">
@@ -186,6 +565,7 @@ export function EmployeeListPage({ accessToken, userName }: EmployeeListPageProp
                     <th scope="col">Attendance</th>
                     <th scope="col">Salary</th>
                     <th scope="col">Status</th>
+                    <th scope="col">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -204,6 +584,15 @@ export function EmployeeListPage({ accessToken, userName }: EmployeeListPageProp
                         <span className={`status-pill status-${employee.status}`}>
                           {formatLabel(employee.status)}
                         </span>
+                      </td>
+                      <td>
+                        <button
+                          className="table-action"
+                          onClick={() => openEditForm(employee)}
+                          type="button"
+                        >
+                          Edit
+                        </button>
                       </td>
                     </tr>
                   ))}

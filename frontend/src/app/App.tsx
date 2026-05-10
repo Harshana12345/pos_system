@@ -10,5 +10,11 @@ export function App() {
     return <LoginPage onLogin={setSession} />;
   }
 
-  return <EmployeeListPage accessToken={session.accessToken} userName={session.user.name} />;
+  return (
+    <EmployeeListPage
+      accessToken={session.accessToken}
+      userBranchId={session.user.branchId}
+      userName={session.user.name}
+    />
+  );
 }
