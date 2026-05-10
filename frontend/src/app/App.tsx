@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { DashboardPage } from '@/pages/DashboardPage';
+import { EmployeeListPage } from '@/pages/EmployeeListPage';
 import { LoginPage } from '@/pages/LoginPage';
 import type { LoginSession } from '@/services/authService';
 
@@ -10,5 +10,5 @@ export function App() {
     return <LoginPage onLogin={setSession} />;
   }
 
-  return <DashboardPage userName={session.user.name} />;
+  return <EmployeeListPage accessToken={session.accessToken} userName={session.user.name} />;
 }
