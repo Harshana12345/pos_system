@@ -1,4 +1,8 @@
-require('dotenv').config();
+try {
+  require('dotenv').config();
+} catch {
+  // dotenv is optional for environments that inject process.env directly.
+}
 
 const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
