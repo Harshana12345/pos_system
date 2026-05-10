@@ -6,5 +6,19 @@ function listProducts(_req, res) {
   });
 }
 
-module.exports = { listProducts };
+function uploadProductImages(req, res) {
+  const files = req.files || [];
 
+  res.status(201).json({
+    data: files.map((file) => ({
+      fieldName: file.fieldname,
+      originalName: file.originalname,
+      fileName: file.filename,
+      mimeType: file.mimetype,
+      size: file.size,
+      path: file.path,
+    })),
+  });
+}
+
+module.exports = { listProducts, uploadProductImages };
