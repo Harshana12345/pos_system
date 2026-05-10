@@ -9,7 +9,7 @@ try {
   dependenciesAvailable = false;
 }
 
-test('purchase routes register POST / and PUT /:id/approve', {
+test('purchase routes register create, approve, and receive endpoints', {
   skip: !dependenciesAvailable,
 }, () => {
   const purchaseRoutes = require('../src/routes/purchaseRoutes');
@@ -21,7 +21,12 @@ test('purchase routes register POST / and PUT /:id/approve', {
     (layer) =>
       layer.route?.path === '/:id/approve' && layer.route.methods.put === true
   );
+  const hasReceiveRoute = purchaseRoutes.stack.some(
+    (layer) =>
+      layer.route?.path === '/:id/receive' && layer.route.methods.post === true
+  );
 
   assert.equal(hasCreateRoute, true);
   assert.equal(hasApproveRoute, true);
+  assert.equal(hasReceiveRoute, true);
 });

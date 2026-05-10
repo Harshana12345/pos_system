@@ -237,10 +237,190 @@ async function approvePurchaseOrder(purchaseOrderId) {
   }
 }
 
+async function receiveInventoryItem(client, requester, purchaseOrderId, branchId, item) {
+  const inventoryResult = await client.query(
+    `SELECT id,
+            product_id,
+            variant_id,
+            branch_id,
+            quantity
+     FROM inventory
+     WHERE product_id = $1
+       AND variant_id IS NULL
+       AND branch_id = $2
+     FOR UPDATE`,
+    [item.productId, branchId]
+  );
+
+  const reason = `Purchase order ${purchaseOrderId} received`;
+  let inventoryId;
+  let previousQuantity;
+  let newQuantity;
+
+  if (inventoryResult.rowCount === 0) {
+    previousQuantity = 0;
+    newQuantity = item.quantity;
+
+    const insertedInventory = await client.query(
+      `INSERT INTO inventory (
+         product_id,
+         variant_id,
+         branch_id,
+         quantity
+       )
+       VALUES ($1, NULL, $2, $3)
+       RETURNING id`,
+      [item.productId, branchId, newQuantity]
+    );
+
+    inventoryId = insertedInventory.rows[0].id;
+  } else {
+    inventoryId = inventoryResult.rows[0].id;
+    previousQuantity = Number(inventoryResult.rows[0].quantity);
+    newQuantity = previousQuantity + item.quantity;
+
+    await client.query(
+      `UPDATE inventory
+       SET quantity = $2,
+           last_updated = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [inventoryId, newQuantity]
+    );
+  }
+
+  const adjustmentResult = await client.query(
+    `INSERT INTO inventory_adjustments (
+       inventory_id,
+       product_id,
+       variant_id,
+       branch_id,
+       previous_quantity,
+       new_quantity,
+       quantity_change,
+       reason,
+       adjusted_by_user_id
+     )
+     VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8)
+     RETURNING id,
+               inventory_id,
+               product_id,
+               variant_id,
+               branch_id,
+               previous_quantity,
+               new_quantity,
+               quantity_change,
+               reason,
+               adjusted_by_user_id,
+               created_at`,
+    [
+      inventoryId,
+      item.productId,
+      branchId,
+      previousQuantity,
+      newQuantity,
+      item.quantity,
+      reason,
+      requester?.id ?? null,
+    ]
+  );
+
+  return adjustmentResult.rows[0];
+}
+
+async function receivePurchaseOrder(requester, purchaseOrderId) {
+  const normalizedRequester = purchaseOrderId === undefined ? null : requester;
+  const normalizedPurchaseOrderId =
+    purchaseOrderId === undefined ? requester : purchaseOrderId;
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const orderResult = await client.query(
+      `SELECT id,
+              supplier_id,
+              branch_id,
+              status,
+              total_amount,
+              notes,
+              created_by,
+              created_at
+       FROM purchase_orders
+       WHERE id = $1
+       FOR UPDATE`,
+      [normalizedPurchaseOrderId]
+    );
+
+    if (orderResult.rowCount === 0) {
+      throw new HttpError(404, 'Purchase order not found.');
+    }
+
+    if (orderResult.rows[0].status !== 'ordered') {
+      throw new HttpError(400, 'Only ordered purchase orders can be received.');
+    }
+
+    const items = await findPurchaseItemsByOrderId(client, normalizedPurchaseOrderId);
+    const adjustments = [];
+
+    for (const item of items) {
+      adjustments.push(
+        await receiveInventoryItem(
+          client,
+          normalizedRequester,
+          normalizedPurchaseOrderId,
+          orderResult.rows[0].branch_id,
+          item
+        )
+      );
+    }
+
+    const receivedResult = await client.query(
+      `UPDATE purchase_orders
+       SET status = 'received'
+       WHERE id = $1
+       RETURNING id,
+                 supplier_id,
+                 branch_id,
+                 status,
+                 total_amount,
+                 notes,
+                 created_by,
+                 created_at`,
+      [normalizedPurchaseOrderId]
+    );
+
+    await client.query('COMMIT');
+
+    return {
+      ...mapPurchaseOrderRow(receivedResult.rows[0], items),
+      inventoryAdjustments: adjustments.map((row) => ({
+        id: row.id,
+        inventoryId: row.inventory_id,
+        productId: row.product_id,
+        variantId: row.variant_id,
+        branchId: row.branch_id,
+        previousQuantity: Number(row.previous_quantity),
+        newQuantity: Number(row.new_quantity),
+        quantityChange: Number(row.quantity_change),
+        reason: row.reason,
+        adjustedByUserId: row.adjusted_by_user_id,
+        createdAt: row.created_at,
+      })),
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   approvePurchaseOrder,
   createPurchaseOrder,
   mapPurchaseItemRow,
   mapPurchaseOrderRow,
   normalizePurchasePayload,
+  receivePurchaseOrder,
 };

@@ -44,7 +44,28 @@ async function approvePurchase(req, res, next) {
   }
 }
 
+async function receivePurchase(req, res, next) {
+  if (!isPositiveInteger(req.params.id)) {
+    next(new HttpError(400, 'Purchase order ID must be a positive integer.'));
+    return;
+  }
+
+  try {
+    const purchase = await purchaseService.receivePurchaseOrder(
+      req.user,
+      Number(req.params.id)
+    );
+
+    res.status(200).json({
+      data: purchase,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   approvePurchase,
   createPurchase,
+  receivePurchase,
 };

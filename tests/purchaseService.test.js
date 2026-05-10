@@ -298,3 +298,312 @@ test('approvePurchaseOrder rejects non-pending orders', {
 
   assert.equal(queries.at(-1).sql, 'ROLLBACK');
 });
+
+test('receivePurchaseOrder marks order received and updates inventory', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const purchaseService = require('../src/services/purchaseService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/FROM purchase_orders/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: params[0],
+              supplier_id: '1',
+              branch_id: '2',
+              status: 'ordered',
+              total_amount: '10.00',
+              notes: null,
+              created_by: '42',
+              created_at: new Date('2026-05-10T00:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/FROM purchase_order_items/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '80',
+              purchase_order_id: params[0],
+              product_id: '10',
+              quantity: '2',
+              cost_price: '5.00',
+            },
+          ],
+        };
+      }
+
+      if (/FROM inventory/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '90',
+              product_id: params[0],
+              variant_id: null,
+              branch_id: params[1],
+              quantity: 4,
+            },
+          ],
+        };
+      }
+
+      if (/UPDATE inventory/.test(sql)) {
+        return { rowCount: 1, rows: [] };
+      }
+
+      if (/INSERT INTO inventory_adjustments/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '99',
+              inventory_id: params[0],
+              product_id: params[1],
+              variant_id: null,
+              branch_id: params[2],
+              previous_quantity: params[3],
+              new_quantity: params[4],
+              quantity_change: params[5],
+              reason: params[6],
+              adjusted_by_user_id: params[7],
+              created_at: new Date('2026-05-10T01:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/UPDATE purchase_orders/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: params[0],
+              supplier_id: '1',
+              branch_id: '2',
+              status: 'received',
+              total_amount: '10.00',
+              notes: null,
+              created_by: '42',
+              created_at: new Date('2026-05-10T00:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  const purchase = await purchaseService.receivePurchaseOrder({ id: 7 }, 50);
+
+  assert.deepEqual(
+    queries.map(({ sql }) => sql),
+    [
+      'BEGIN',
+      queries[1].sql,
+      queries[2].sql,
+      queries[3].sql,
+      queries[4].sql,
+      queries[5].sql,
+      queries[6].sql,
+      'COMMIT',
+    ]
+  );
+  assert.match(queries[3].sql, /FROM inventory/);
+  assert.match(queries[3].sql, /FOR UPDATE/);
+  assert.deepEqual(queries[3].params, ['10', '2']);
+  assert.deepEqual(queries[4].params, ['90', 6]);
+  assert.deepEqual(queries[5].params, [
+    '90',
+    '10',
+    '2',
+    4,
+    6,
+    2,
+    'Purchase order 50 received',
+    7,
+  ]);
+  assert.match(queries[6].sql, /SET status = 'received'/);
+  assert.equal(purchase.status, 'received');
+  assert.equal(purchase.items[0].lineTotal, 10);
+  assert.equal(purchase.inventoryAdjustments[0].previousQuantity, 4);
+  assert.equal(purchase.inventoryAdjustments[0].newQuantity, 6);
+  assert.equal(purchase.inventoryAdjustments[0].quantityChange, 2);
+});
+
+test('receivePurchaseOrder creates inventory rows for first receipt', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const purchaseService = require('../src/services/purchaseService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/FROM purchase_orders/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: params[0],
+              supplier_id: '1',
+              branch_id: '2',
+              status: 'ordered',
+              total_amount: '10.00',
+              notes: null,
+              created_by: '42',
+              created_at: new Date('2026-05-10T00:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/FROM purchase_order_items/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '80',
+              purchase_order_id: params[0],
+              product_id: '10',
+              quantity: '2',
+              cost_price: '5.00',
+            },
+          ],
+        };
+      }
+
+      if (/FROM inventory/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rowCount: 0, rows: [] };
+      }
+
+      if (/INSERT INTO inventory \(/.test(sql)) {
+        return { rowCount: 1, rows: [{ id: '90' }] };
+      }
+
+      if (/INSERT INTO inventory_adjustments/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '99',
+              inventory_id: params[0],
+              product_id: params[1],
+              variant_id: null,
+              branch_id: params[2],
+              previous_quantity: params[3],
+              new_quantity: params[4],
+              quantity_change: params[5],
+              reason: params[6],
+              adjusted_by_user_id: params[7],
+              created_at: new Date('2026-05-10T01:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/UPDATE purchase_orders/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: params[0],
+              supplier_id: '1',
+              branch_id: '2',
+              status: 'received',
+              total_amount: '10.00',
+              notes: null,
+              created_by: '42',
+              created_at: new Date('2026-05-10T00:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  const purchase = await purchaseService.receivePurchaseOrder({ id: 7 }, 50);
+  const insertInventoryQuery = queries.find(({ sql }) => /INSERT INTO inventory \(/.test(sql));
+
+  assert.deepEqual(insertInventoryQuery.params, ['10', '2', 2]);
+  assert.equal(purchase.inventoryAdjustments[0].previousQuantity, 0);
+  assert.equal(purchase.inventoryAdjustments[0].newQuantity, 2);
+});
+
+test('receivePurchaseOrder rejects non-ordered purchase orders', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const purchaseService = require('../src/services/purchaseService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/FROM purchase_orders/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: params[0],
+              supplier_id: '1',
+              branch_id: '2',
+              status: 'received',
+              total_amount: '10.00',
+              notes: null,
+              created_by: '42',
+              created_at: new Date('2026-05-10T00:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  await assert.rejects(() => purchaseService.receivePurchaseOrder({ id: 7 }, 50), {
+    statusCode: 400,
+    message: 'Only ordered purchase orders can be received.',
+  });
+
+  assert.equal(queries.some(({ sql }) => /FROM inventory/.test(sql)), false);
+  assert.equal(queries.at(-1).sql, 'ROLLBACK');
+});
