@@ -38,6 +38,25 @@ async function listEmployees(req, res, next) {
   }
 }
 
+async function listEmployeeActivityLogs(req, res, next) {
+  const errors = validateEmployeeId(req.params.id);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const activityLogs = await employeeService.findActivityLogsForUser(req.user, req.params.id);
+
+    res.status(200).json({
+      data: activityLogs,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function updateEmployee(req, res, next) {
   const errors = [
     ...validateEmployeeId(req.params.id),
@@ -167,6 +186,7 @@ module.exports = {
   checkOutEmployee,
   createEmployee,
   deleteEmployee,
+  listEmployeeActivityLogs,
   listEmployees,
   updateEmployee,
   updateEmployeeShift,

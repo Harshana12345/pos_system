@@ -1,5 +1,6 @@
 const database = require('../config/database');
 const Employee = require('../models/Employee');
+const EmployeeActivityLog = require('../models/EmployeeActivityLog');
 const HttpError = require('../utils/httpError');
 const { hashPassword } = require('../utils/passwordHash');
 
@@ -32,6 +33,20 @@ function mapEmployeeRow(row) {
   });
 }
 
+function mapEmployeeActivityLogRow(row) {
+  return new EmployeeActivityLog({
+    id: row.id,
+    employeeId: row.employee_id,
+    userId: row.user_id,
+    action: row.action,
+    description: row.description,
+    metadata: row.metadata,
+    ipAddress: row.ip_address,
+    userAgent: row.user_agent,
+    createdAt: row.created_at,
+  });
+}
+
 async function findRequesterRoleName(roleId) {
   const result = await database.query(
     `SELECT name
@@ -42,6 +57,47 @@ async function findRequesterRoleName(roleId) {
   );
 
   return result.rows[0]?.name;
+}
+
+async function ensureRequesterCanViewEmployeeActivity(requester, employeeId) {
+  const requesterRoleName = await findRequesterRoleName(requester.roleId);
+
+  if (!requesterRoleName) {
+    throw new HttpError(403, 'Authenticated user role is not recognized.');
+  }
+
+  const employeeResult = await database.query(
+    `SELECT id, user_id, branch_id
+     FROM employees
+     WHERE id = $1
+       AND deleted_at IS NULL
+     LIMIT 1`,
+    [Number(employeeId)]
+  );
+
+  if (employeeResult.rowCount === 0) {
+    throw new HttpError(404, 'Employee not found.');
+  }
+
+  const employee = employeeResult.rows[0];
+
+  if (requesterRoleName === 'admin') {
+    return employee;
+  }
+
+  if (requesterRoleName === 'manager') {
+    if (Number(requester.branchId) !== Number(employee.branch_id)) {
+      throw new HttpError(403, 'Managers can only view activity logs for their branch.');
+    }
+
+    return employee;
+  }
+
+  if (Number(requester.id) !== Number(employee.user_id)) {
+    throw new HttpError(403, 'You can only view your own activity logs.');
+  }
+
+  return employee;
 }
 
 async function ensureRequesterCanCreateEmployee(client, requester, branchId) {
@@ -679,6 +735,28 @@ async function findAllForUser(user) {
   return result.rows.map(mapEmployeeRow);
 }
 
+async function findActivityLogsForUser(user, employeeId) {
+  await ensureRequesterCanViewEmployeeActivity(user, employeeId);
+
+  const result = await database.query(
+    `SELECT id,
+            employee_id,
+            user_id,
+            action,
+            description,
+            metadata,
+            ip_address,
+            user_agent,
+            created_at
+     FROM employee_activity_logs
+     WHERE employee_id = $1
+     ORDER BY created_at DESC, id DESC`,
+    [Number(employeeId)]
+  );
+
+  return result.rows.map(mapEmployeeActivityLogRow);
+}
+
 async function deleteEmployee(requester, id) {
   const client = await database.pool.connect();
 
@@ -729,7 +807,9 @@ module.exports = {
   checkOutEmployee,
   createEmployee,
   deleteEmployee,
+  findActivityLogsForUser,
   findAllForUser,
+  mapEmployeeActivityLogRow,
   mapEmployeeRow,
   updateEmployee,
   updateEmployeeShift,

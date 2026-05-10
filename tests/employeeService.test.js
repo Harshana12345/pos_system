@@ -1446,3 +1446,158 @@ test(
     assert.equal(queries.at(-1).sql, 'ROLLBACK');
   }
 );
+
+test(
+  'findActivityLogsForUser returns employee activity logs for admins',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalQuery = database.query;
+    const queries = [];
+
+    t.after(() => {
+      database.query = originalQuery;
+    });
+
+    database.query = async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/FROM roles/.test(sql)) {
+        return { rowCount: 1, rows: [{ name: 'admin' }] };
+      }
+
+      if (/FROM employees/.test(sql)) {
+        return { rowCount: 1, rows: [{ id: '21', user_id: '11', branch_id: '4' }] };
+      }
+
+      if (/FROM employee_activity_logs/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '101',
+              employee_id: '21',
+              user_id: '11',
+              action: 'login',
+              description: 'User signed in',
+              metadata: { method: 'password' },
+              ip_address: '127.0.0.1',
+              user_agent: 'node-test',
+              created_at: new Date('2026-05-10T01:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    };
+
+    const activityLogs = await employeeService.findActivityLogsForUser(
+      {
+        id: 1,
+        roleId: 1,
+        branchId: 2,
+      },
+      '21'
+    );
+    const activityQuery = queries.find(({ sql }) => /FROM employee_activity_logs/.test(sql));
+
+    assert.match(activityQuery.sql, /ORDER BY created_at DESC, id DESC/);
+    assert.equal(activityQuery.params[0], 21);
+    assert.equal(activityLogs.length, 1);
+    assert.equal(activityLogs[0].id, '101');
+    assert.equal(activityLogs[0].employeeId, '21');
+    assert.equal(activityLogs[0].action, 'login');
+    assert.deepEqual(activityLogs[0].metadata, { method: 'password' });
+  }
+);
+
+test(
+  'findActivityLogsForUser restricts managers to their branch',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalQuery = database.query;
+
+    t.after(() => {
+      database.query = originalQuery;
+    });
+
+    database.query = async (sql) => {
+      if (/FROM roles/.test(sql)) {
+        return { rowCount: 1, rows: [{ name: 'manager' }] };
+      }
+
+      if (/FROM employees/.test(sql)) {
+        return { rowCount: 1, rows: [{ id: '21', user_id: '11', branch_id: '8' }] };
+      }
+
+      throw new Error('Activity logs should not be queried after authorization fails.');
+    };
+
+    await assert.rejects(
+      () =>
+        employeeService.findActivityLogsForUser(
+          {
+            id: 9,
+            roleId: 2,
+            branchId: 7,
+          },
+          '21'
+        ),
+      {
+        message: 'Managers can only view activity logs for their branch.',
+        statusCode: 403,
+      }
+    );
+  }
+);
+
+test(
+  'findActivityLogsForUser allows employees to view their own activity logs',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalQuery = database.query;
+
+    t.after(() => {
+      database.query = originalQuery;
+    });
+
+    database.query = async (sql) => {
+      if (/FROM roles/.test(sql)) {
+        return { rowCount: 1, rows: [{ name: 'cashier' }] };
+      }
+
+      if (/FROM employees/.test(sql)) {
+        return { rowCount: 1, rows: [{ id: '21', user_id: '11', branch_id: '4' }] };
+      }
+
+      if (/FROM employee_activity_logs/.test(sql)) {
+        return { rowCount: 0, rows: [] };
+      }
+
+      throw new Error(`Unexpected query: ${sql}`);
+    };
+
+    const activityLogs = await employeeService.findActivityLogsForUser(
+      {
+        id: 11,
+        roleId: 3,
+        branchId: 4,
+      },
+      '21'
+    );
+
+    assert.deepEqual(activityLogs, []);
+  }
+);

@@ -6,6 +6,7 @@ const {
   checkOutEmployee,
   createEmployee,
   deleteEmployee,
+  listEmployeeActivityLogs,
   listEmployees,
   updateEmployee,
   updateEmployeeShift,
@@ -14,6 +15,7 @@ const {
 const router = Router();
 
 router.get('/', listEmployees);
+router.get('/:id/activity-logs', listEmployeeActivityLogs);
 router.post('/', createEmployee);
 router.post('/:id/check-in', checkInEmployee);
 router.post('/:id/check-out', checkOutEmployee);
