@@ -185,13 +185,22 @@ h1 {
   padding: 22px;
 }
 
+.catalog-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  padding: 22px;
+}
+
 .employee-form-alert,
 .form-actions {
   grid-column: 1 / -1;
 }
 
 .product-form-wide,
-.product-description {
+.product-description,
+.catalog-form-wide,
+.catalog-description {
   grid-column: 1 / -1;
 }
 
@@ -714,6 +723,25 @@ h1 {
   font-size: 0.84rem;
 }
 
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.danger-action {
+  color: #9f1f14;
+}
+
+.danger-action:hover {
+  border-color: #b42318;
+  color: #9f1f14;
+}
+
+.catalog-table {
+  min-width: 760px;
+}
+
 .form-hint {
   margin: -6px 0 0;
   color: #6b7280;
@@ -758,7 +786,8 @@ h1 {
     grid-template-columns: 1fr;
   }
 
-  .employee-form {
+  .employee-form,
+  .catalog-form {
     grid-template-columns: 1fr;
   }
 

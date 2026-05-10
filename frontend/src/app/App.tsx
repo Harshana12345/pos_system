@@ -1,10 +1,19 @@
 import { useState } from 'react';
+import { BrandListPage } from '@/pages/BrandListPage';
+import { CategoryListPage } from '@/pages/CategoryListPage';
 import { EmployeeListPage } from '@/pages/EmployeeListPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { ProductListPage } from '@/pages/ProductListPage';
 import type { LoginSession } from '@/services/authService';
 
-type AppView = 'products' | 'employees';
+type AppView = 'products' | 'categories' | 'brands' | 'employees';
+
+const NAV_ITEMS: { label: string; value: AppView }[] = [
+  { label: 'Products', value: 'products' },
+  { label: 'Categories', value: 'categories' },
+  { label: 'Brands', value: 'brands' },
+  { label: 'Employees', value: 'employees' },
+];
 
 export function App() {
   const [session, setSession] = useState<LoginSession | null>(null);
@@ -14,17 +23,25 @@ export function App() {
     return <LoginPage onLogin={setSession} />;
   }
 
+  const nav = (
+    <nav className="app-nav" aria-label="Primary">
+      {NAV_ITEMS.map((item) => (
+        <button
+          aria-current={activeView === item.value ? 'page' : undefined}
+          key={item.value}
+          onClick={() => setActiveView(item.value)}
+          type="button"
+        >
+          {item.label}
+        </button>
+      ))}
+    </nav>
+  );
+
   if (activeView === 'employees') {
     return (
       <>
-        <nav className="app-nav" aria-label="Primary">
-          <button onClick={() => setActiveView('products')} type="button">
-            Products
-          </button>
-          <button aria-current="page" onClick={() => setActiveView('employees')} type="button">
-            Employees
-          </button>
-        </nav>
+        {nav}
         <EmployeeListPage
           accessToken={session.accessToken}
           userBranchId={session.user.branchId}
@@ -34,16 +51,27 @@ export function App() {
     );
   }
 
+  if (activeView === 'categories') {
+    return (
+      <>
+        {nav}
+        <CategoryListPage accessToken={session.accessToken} userName={session.user.name} />
+      </>
+    );
+  }
+
+  if (activeView === 'brands') {
+    return (
+      <>
+        {nav}
+        <BrandListPage accessToken={session.accessToken} userName={session.user.name} />
+      </>
+    );
+  }
+
   return (
     <>
-      <nav className="app-nav" aria-label="Primary">
-        <button aria-current="page" onClick={() => setActiveView('products')} type="button">
-          Products
-        </button>
-        <button onClick={() => setActiveView('employees')} type="button">
-          Employees
-        </button>
-      </nav>
+      {nav}
       <ProductListPage accessToken={session.accessToken} userName={session.user.name} />
     </>
   );
