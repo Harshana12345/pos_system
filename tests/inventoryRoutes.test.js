@@ -41,3 +41,14 @@ test('inventory routes register GET /movements', {
 
   assert.equal(hasListInventoryMovementsRoute, true);
 });
+
+test('inventory routes register GET /low-stock', {
+  skip: !dependenciesAvailable,
+}, () => {
+  const inventoryRoutes = require('../src/routes/inventoryRoutes');
+  const hasListLowStockInventoryRoute = inventoryRoutes.stack.some(
+    (layer) => layer.route?.path === '/low-stock' && layer.route.methods.get === true
+  );
+
+  assert.equal(hasListLowStockInventoryRoute, true);
+});

@@ -59,7 +59,7 @@ function normalizeMovementFilters(filters = {}) {
   };
 }
 
-async function findAll(filters = {}) {
+async function findInventory(filters = {}, options = {}) {
   const branchId = normalizeBranchId(filters);
   const params = [];
   const where = ['products.deleted_at IS NULL', 'branches.deleted_at IS NULL'];
@@ -67,6 +67,10 @@ async function findAll(filters = {}) {
   if (branchId !== null) {
     params.push(branchId);
     where.push(`inventory.branch_id = $${params.length}`);
+  }
+
+  if (options.lowStockOnly === true) {
+    where.push('inventory.quantity < COALESCE(product_variants.reorder_level, products.reorder_level)');
   }
 
   const result = await database.query(
@@ -100,6 +104,14 @@ async function findAll(filters = {}) {
   );
 
   return result.rows.map(mapInventoryRow);
+}
+
+async function findAll(filters = {}) {
+  return findInventory(filters);
+}
+
+async function findLowStock(filters = {}) {
+  return findInventory(filters, { lowStockOnly: true });
 }
 
 function normalizeAdjustmentPayload(payload) {
@@ -363,6 +375,7 @@ async function adjustStock(requester, payload) {
 module.exports = {
   adjustStock,
   findAll,
+  findLowStock,
   findMovements,
   mapAdjustmentRow,
   mapInventoryRow,

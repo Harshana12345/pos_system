@@ -114,6 +114,61 @@ test('findAll filters inventory by branch id', {
   assert.deepEqual(selectParams, [7]);
 });
 
+test('findLowStock lists inventory below reorder level', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const inventoryService = require('../src/services/inventoryService');
+  const originalQuery = database.query;
+  let selectSql;
+  let selectParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params = []) => {
+    selectSql = sql;
+    selectParams = params;
+
+    return {
+      rowCount: 1,
+      rows: [
+        {
+          id: '1',
+          product_id: '10',
+          variant_id: null,
+          branch_id: '3',
+          quantity: 4,
+          last_updated: new Date('2026-05-01T00:00:00.000Z'),
+          reorder_level: 5,
+          product_name: 'Coffee',
+          product_sku: 'COFFEE',
+          product_barcode: null,
+          product_status: 'active',
+          variant_name: null,
+          variant_sku: null,
+          variant_barcode: null,
+          variant_status: null,
+          branch_name: 'Downtown',
+          branch_status: 'active',
+        },
+      ],
+    };
+  };
+
+  const inventory = await inventoryService.findLowStock({ branch_id: '3' });
+
+  assert.match(
+    selectSql,
+    /inventory\.quantity < COALESCE\(product_variants\.reorder_level, products\.reorder_level\)/
+  );
+  assert.match(selectSql, /inventory\.branch_id = \$1/);
+  assert.deepEqual(selectParams, [3]);
+  assert.equal(inventory[0].lowStockAlert, true);
+  assert.equal(inventory[0].product.name, 'Coffee');
+});
+
 test('findMovements lists stock movements with filters', {
   skip: !dependenciesAvailable,
 }, async (t) => {
