@@ -26,6 +26,14 @@ select {
   font: inherit;
 }
 
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 .app-shell {
   min-height: 100vh;
   padding: 32px;
@@ -64,6 +72,116 @@ h1 {
   line-height: 1.6;
 }
 
+.login-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px;
+  background:
+    linear-gradient(135deg, rgba(232, 245, 239, 0.92), rgba(247, 248, 250, 0.72)),
+    #f7f8fa;
+}
+
+.login-panel {
+  display: grid;
+  width: min(960px, 100%);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 48px;
+  align-items: center;
+}
+
+.login-copy {
+  padding: 24px 0;
+}
+
+.login-form {
+  display: grid;
+  gap: 20px;
+  padding: 28px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 48px rgba(18, 30, 45, 0.12);
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+  color: #263241;
+  font-size: 0.94rem;
+  font-weight: 700;
+}
+
+.field input {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid #c7d0dc;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #111827;
+  outline: none;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.field input:focus {
+  border-color: #2f6f69;
+  box-shadow: 0 0 0 3px rgba(47, 111, 105, 0.16);
+}
+
+.field input[aria-invalid="true"] {
+  border-color: #b42318;
+}
+
+.field-error {
+  color: #b42318;
+  font-size: 0.84rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.form-alert {
+  border: 1px solid #f0b8b0;
+  border-radius: 6px;
+  padding: 12px;
+  background: #fff2f0;
+  color: #9f1f14;
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.primary-action {
+  min-height: 48px;
+  border: 0;
+  border-radius: 6px;
+  padding: 12px 18px;
+  background: #173f3b;
+  color: #ffffff;
+  font-weight: 800;
+  transition:
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.primary-action:hover:not(:disabled) {
+  background: #2f6f69;
+  transform: translateY(-1px);
+}
+
+.primary-action:disabled {
+  opacity: 0.72;
+}
+
+.form-hint {
+  margin: -6px 0 0;
+  color: #6b7280;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
 @media (max-width: 640px) {
   .app-shell {
     padding: 24px 18px;
@@ -71,5 +189,24 @@ h1 {
 
   .page-header {
     padding: 32px 0;
+  }
+
+  .login-page {
+    padding: 24px 18px;
+    place-items: stretch;
+  }
+
+  .login-panel {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    align-content: center;
+  }
+
+  .login-copy {
+    padding: 0;
+  }
+
+  .login-form {
+    padding: 22px;
   }
 }
