@@ -1,6 +1,7 @@
 const customerService = require('../services/customerService');
 const HttpError = require('../utils/httpError');
 const {
+  validateBirthdayPromotionQuery,
   validateCreditBalancePayload,
   validateCustomerId,
   validateCustomerPayload,
@@ -70,6 +71,30 @@ async function getCustomerCreditBalance(req, res, next) {
 
     res.status(200).json({
       data: creditBalance,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function listBirthdayPromotionCustomers(req, res, next) {
+  const errors = validateBirthdayPromotionQuery(req.query);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const customers = await customerService.findUpcomingBirthdayPromotions({
+      daysAhead:
+        req.query.daysAhead === undefined
+          ? undefined
+          : Number(req.query.daysAhead),
+    });
+
+    res.status(200).json({
+      data: customers,
     });
   } catch (error) {
     next(error);
@@ -192,6 +217,7 @@ module.exports = {
   getCustomer,
   getCustomerCreditBalance,
   getCustomerPurchaseHistory,
+  listBirthdayPromotionCustomers,
   listCustomers,
   updateCustomer,
 };

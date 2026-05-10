@@ -44,6 +44,11 @@ test('customer routes register CRUD endpoints', {
       layer.route?.path === '/:id/credit-balance' &&
       layer.route.methods.get === true
   );
+  const hasBirthdayPromotionsRoute = customerRoutes.stack.some(
+    (layer) =>
+      layer.route?.path === '/birthday-promotions' &&
+      layer.route.methods.get === true
+  );
   const hasAdjustCreditBalanceRoute = customerRoutes.stack.some(
     (layer) =>
       layer.route?.path === '/:id/credit-balance' &&
@@ -58,5 +63,6 @@ test('customer routes register CRUD endpoints', {
   assert.equal(hasPurchaseHistoryRoute, true);
   assert.equal(hasLoyaltyPointsRoute, true);
   assert.equal(hasGetCreditBalanceRoute, true);
+  assert.equal(hasBirthdayPromotionsRoute, true);
   assert.equal(hasAdjustCreditBalanceRoute, true);
 });

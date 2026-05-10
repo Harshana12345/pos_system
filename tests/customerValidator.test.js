@@ -2,6 +2,7 @@ const assert = require('node:assert');
 const test = require('node:test');
 
 const {
+  validateBirthdayPromotionQuery,
   validateCreditBalancePayload,
   validateCustomerId,
   validateCustomerPayload,
@@ -22,6 +23,7 @@ test('customer payload validation accepts valid details', () => {
     phone: '+94112223344',
     email: 'jane@example.com',
     address: '12 Main Street',
+    dateOfBirth: '1990-05-12',
     loyaltyPoints: 10,
     creditBalance: '25.50',
     notes: 'Prefers SMS',
@@ -38,6 +40,7 @@ test('customer payload validation rejects invalid details', () => {
     phone: 123,
     loyaltyPoints: -1,
     creditBalance: -10,
+    dateOfBirth: '2026-02-30',
     status: 'archived',
     customerGroupId: 0,
   });
@@ -46,8 +49,22 @@ test('customer payload validation rejects invalid details', () => {
   assert.match(errors.join(' '), /Customer phone must be a string/);
   assert.match(errors.join(' '), /Customer loyalty points must be a non-negative integer/);
   assert.match(errors.join(' '), /Customer credit balance must be a non-negative number/);
+  assert.match(errors.join(' '), /Customer date of birth must be a valid YYYY-MM-DD date/);
   assert.match(errors.join(' '), /Customer status must be active or inactive/);
   assert.match(errors.join(' '), /Customer group ID must be a positive integer/);
+});
+
+test('birthday promotion query validation accepts valid days ahead', () => {
+  assert.deepEqual(validateBirthdayPromotionQuery({}), []);
+  assert.deepEqual(validateBirthdayPromotionQuery({ daysAhead: '14' }), []);
+});
+
+test('birthday promotion query validation rejects invalid days ahead', () => {
+  const errors = validateBirthdayPromotionQuery({ daysAhead: '367' });
+
+  assert.deepEqual(errors, [
+    'Birthday promotion days ahead must be an integer from 0 to 366.',
+  ]);
 });
 
 test('loyalty points payload validation accepts add and redeem actions', () => {

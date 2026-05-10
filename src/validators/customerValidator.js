@@ -32,6 +32,21 @@ function isPositiveNumber(value) {
   return Number.isFinite(normalized) && normalized > 0;
 }
 
+function isDateOnly(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
 function validateCustomerId(id) {
   if (!isPositiveInteger(id)) {
     return ['Customer ID must be a positive integer.'];
@@ -80,6 +95,16 @@ function validateCustomerPayload(payload) {
     errors.push('Customer credit balance must be a non-negative number.');
   }
 
+  const dateOfBirth = payload.dateOfBirth ?? payload.date_of_birth;
+
+  if (
+    dateOfBirth !== undefined &&
+    dateOfBirth !== null &&
+    !isDateOnly(dateOfBirth)
+  ) {
+    errors.push('Customer date of birth must be a valid YYYY-MM-DD date.');
+  }
+
   const customerGroupId = payload.customerGroupId ?? payload.customer_group_id;
 
   if (
@@ -92,6 +117,23 @@ function validateCustomerPayload(payload) {
 
   if (payload.status !== undefined && !VALID_CUSTOMER_STATUSES.has(payload.status)) {
     errors.push('Customer status must be active or inactive.');
+  }
+
+  return errors;
+}
+
+function validateBirthdayPromotionQuery(query) {
+  const errors = [];
+
+  if (!isPlainObject(query)) {
+    return errors;
+  }
+
+  if (
+    query.daysAhead !== undefined &&
+    (!isNonNegativeInteger(query.daysAhead) || Number(query.daysAhead) > 366)
+  ) {
+    errors.push('Birthday promotion days ahead must be an integer from 0 to 366.');
   }
 
   return errors;
@@ -134,6 +176,7 @@ function validateCreditBalancePayload(payload) {
 }
 
 module.exports = {
+  validateBirthdayPromotionQuery,
   validateCreditBalancePayload,
   validateCustomerId,
   validateCustomerPayload,

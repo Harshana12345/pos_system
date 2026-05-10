@@ -8,6 +8,7 @@ const {
   getCustomer,
   getCustomerCreditBalance,
   getCustomerPurchaseHistory,
+  listBirthdayPromotionCustomers,
   listCustomers,
   updateCustomer,
 } = require('../controllers/customerController');
@@ -15,6 +16,7 @@ const {
 const router = Router();
 
 router.get('/', listCustomers);
+router.get('/birthday-promotions', listBirthdayPromotionCustomers);
 router.get('/:id/credit-balance', getCustomerCreditBalance);
 router.get('/:id/purchase-history', getCustomerPurchaseHistory);
 router.get('/:id', getCustomer);

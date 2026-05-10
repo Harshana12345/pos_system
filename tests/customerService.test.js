@@ -35,6 +35,7 @@ test('findAll returns customers ordered by id', {
           address: '12 Main Street',
           loyalty_points: 10,
           credit_balance: '25.50',
+          date_of_birth: '1990-05-12',
           notes: 'Prefers SMS',
           status: 'active',
           customer_group_id: '2',
@@ -52,6 +53,7 @@ test('findAll returns customers ordered by id', {
   assert.equal(customers[0].fullName, 'Jane Perera');
   assert.equal(customers[0].loyaltyPoints, 10);
   assert.equal(customers[0].creditBalance, 25.5);
+  assert.equal(customers[0].dateOfBirth, '1990-05-12');
   assert.equal(customers[0].customerGroupId, '2');
 });
 
@@ -82,6 +84,7 @@ test('findById returns a customer or rejects missing customers', {
               address: null,
               loyalty_points: 0,
               credit_balance: '0.00',
+              date_of_birth: null,
               notes: null,
               status: 'active',
               customer_group_id: null,
@@ -302,6 +305,107 @@ test('findPurchaseHistoryById rejects missing customers', {
   });
 });
 
+test('findUpcomingBirthdayPromotions flags active customers with upcoming birthdays', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const customerService = require('../src/services/customerService');
+  const originalQuery = database.query;
+  let selectSql;
+  let selectParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    selectSql = sql;
+    selectParams = params;
+
+    return {
+      rowCount: 3,
+      rows: [
+        {
+          id: '1',
+          full_name: 'Jane Perera',
+          phone: '+94112223344',
+          email: 'jane@example.com',
+          address: null,
+          loyalty_points: 10,
+          credit_balance: '0.00',
+          date_of_birth: '1990-05-10',
+          notes: null,
+          status: 'active',
+          customer_group_id: null,
+          created_at: new Date('2026-05-01T00:00:00.000Z'),
+          updated_at: new Date('2026-05-02T00:00:00.000Z'),
+        },
+        {
+          id: '2',
+          full_name: 'Ravi Silva',
+          phone: null,
+          email: null,
+          address: null,
+          loyalty_points: 0,
+          credit_balance: '0.00',
+          date_of_birth: '1991-05-15',
+          notes: null,
+          status: 'active',
+          customer_group_id: null,
+          created_at: new Date('2026-05-01T00:00:00.000Z'),
+          updated_at: new Date('2026-05-02T00:00:00.000Z'),
+        },
+        {
+          id: '3',
+          full_name: 'Far Customer',
+          phone: null,
+          email: null,
+          address: null,
+          loyalty_points: 0,
+          credit_balance: '0.00',
+          date_of_birth: '1992-06-30',
+          notes: null,
+          status: 'active',
+          customer_group_id: null,
+          created_at: new Date('2026-05-01T00:00:00.000Z'),
+          updated_at: new Date('2026-05-02T00:00:00.000Z'),
+        },
+      ],
+    };
+  };
+
+  const customers = await customerService.findUpcomingBirthdayPromotions({
+    daysAhead: 7,
+    referenceDate: new Date('2026-05-10T12:00:00.000Z'),
+  });
+
+  assert.match(selectSql, /date_of_birth IS NOT NULL/);
+  assert.match(selectSql, /WHERE status = \$1/);
+  assert.deepEqual(selectParams, ['active']);
+  assert.equal(customers.length, 2);
+  assert.equal(customers[0].notifyBirthdayPromotion, true);
+  assert.equal(customers[0].daysUntilBirthday, 0);
+  assert.equal(customers[0].nextBirthdayDate, '2026-05-10');
+  assert.equal(customers[1].daysUntilBirthday, 5);
+});
+
+test('calculateNextBirthday treats February 29 birthdays as February 28 in common years', {
+  skip: !dependenciesAvailable,
+}, () => {
+  const customerService = require('../src/services/customerService');
+
+  assert.deepEqual(
+    customerService.calculateNextBirthday(
+      '2000-02-29',
+      new Date('2026-02-27T00:00:00.000Z')
+    ),
+    {
+      daysUntilBirthday: 1,
+      nextBirthdayDate: '2026-02-28',
+    }
+  );
+});
+
 test('createCustomer inserts customer details', {
   skip: !dependenciesAvailable,
 }, async (t) => {
@@ -330,6 +434,7 @@ test('createCustomer inserts customer details', {
           address: '45 Market Road',
           loyalty_points: 15,
           credit_balance: '12.75',
+          date_of_birth: '1992-05-15',
           notes: 'VIP',
           status: 'active',
           customer_group_id: 3,
@@ -347,6 +452,7 @@ test('createCustomer inserts customer details', {
     address: ' 45 Market Road ',
     loyaltyPoints: '15',
     creditBalance: '12.75',
+    dateOfBirth: '1992-05-15',
     notes: ' VIP ',
     customerGroupId: '3',
   });
@@ -359,6 +465,7 @@ test('createCustomer inserts customer details', {
     '45 Market Road',
     15,
     12.75,
+    '1992-05-15',
     'VIP',
     'active',
     3,
@@ -428,6 +535,7 @@ test('adjustLoyaltyPoints adds and redeems points', {
           address: null,
           loyalty_points: /loyalty_points \+ \$2/.test(sql) ? 25 : 20,
           credit_balance: '0.00',
+          date_of_birth: null,
           notes: null,
           status: 'active',
           customer_group_id: null,

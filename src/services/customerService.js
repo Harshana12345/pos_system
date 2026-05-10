@@ -36,6 +36,26 @@ function normalizeBalance(value) {
   return Number(value);
 }
 
+function normalizeNullableDate(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  return value;
+}
+
+function formatDateOnly(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  return String(value).slice(0, 10);
+}
+
 function mapCustomerRow(row) {
   return new Customer({
     id: row.id,
@@ -45,6 +65,7 @@ function mapCustomerRow(row) {
     address: row.address,
     loyaltyPoints: Number(row.loyalty_points),
     creditBalance: Number(row.credit_balance),
+    dateOfBirth: formatDateOnly(row.date_of_birth),
     notes: row.notes,
     status: row.status,
     customerGroupId: row.customer_group_id,
@@ -111,6 +132,7 @@ const CUSTOMER_COLUMNS = `id,
                           address,
                           loyalty_points,
                           credit_balance,
+                          date_of_birth,
                           notes,
                           status,
                           customer_group_id,
@@ -232,6 +254,86 @@ async function findPurchaseHistoryById(id) {
   );
 }
 
+function parseDateOnly(value) {
+  const [year, month, day] = formatDateOnly(value).split('-').map(Number);
+
+  return { year, month, day };
+}
+
+function makeDateOnly(year, month, day) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (date.getUTCMonth() !== month - 1) {
+    return new Date(Date.UTC(year, 1, 28));
+  }
+
+  return date;
+}
+
+function diffInDays(startDate, endDate) {
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+
+  return Math.round(
+    (endDate.getTime() - startDate.getTime()) / millisecondsPerDay
+  );
+}
+
+function calculateNextBirthday(dateOfBirth, referenceDate = new Date()) {
+  const { month, day } = parseDateOnly(dateOfBirth);
+  const reference = new Date(
+    Date.UTC(
+      referenceDate.getUTCFullYear(),
+      referenceDate.getUTCMonth(),
+      referenceDate.getUTCDate()
+    )
+  );
+  const referenceYear = reference.getUTCFullYear();
+  let nextBirthday = makeDateOnly(referenceYear, month, day);
+
+  if (nextBirthday < reference) {
+    nextBirthday = makeDateOnly(referenceYear + 1, month, day);
+  }
+
+  return {
+    daysUntilBirthday: diffInDays(reference, nextBirthday),
+    nextBirthdayDate: nextBirthday.toISOString().slice(0, 10),
+  };
+}
+
+function mapBirthdayPromotionCustomer(customer, birthday) {
+  return {
+    ...customer,
+    notifyBirthdayPromotion: true,
+    daysUntilBirthday: birthday.daysUntilBirthday,
+    nextBirthdayDate: birthday.nextBirthdayDate,
+  };
+}
+
+async function findUpcomingBirthdayPromotions({
+  daysAhead = 14,
+  referenceDate = new Date(),
+} = {}) {
+  const result = await database.query(
+    `SELECT ${CUSTOMER_COLUMNS}
+     FROM customers
+     WHERE status = $1
+       AND date_of_birth IS NOT NULL
+     ORDER BY id ASC`,
+    ['active']
+  );
+
+  return result.rows
+    .map(mapCustomerRow)
+    .map((customer) => ({
+      customer,
+      birthday: calculateNextBirthday(customer.dateOfBirth, referenceDate),
+    }))
+    .filter(({ birthday }) => birthday.daysUntilBirthday <= Number(daysAhead))
+    .map(({ customer, birthday }) =>
+      mapBirthdayPromotionCustomer(customer, birthday)
+    );
+}
+
 async function createCustomer({
   fullName,
   full_name,
@@ -242,6 +344,8 @@ async function createCustomer({
   loyalty_points,
   creditBalance,
   credit_balance,
+  dateOfBirth,
+  date_of_birth,
   notes,
   status,
   customerGroupId,
@@ -256,11 +360,12 @@ async function createCustomer({
          address,
          loyalty_points,
          credit_balance,
+         date_of_birth,
          notes,
          status,
          customer_group_id
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING ${CUSTOMER_COLUMNS}`,
       [
         (fullName ?? full_name).trim(),
@@ -269,6 +374,7 @@ async function createCustomer({
         normalizeNullableString(address),
         normalizeNonNegativeInteger(loyaltyPoints ?? loyalty_points),
         normalizeBalance(creditBalance ?? credit_balance),
+        normalizeNullableDate(dateOfBirth ?? date_of_birth),
         normalizeNullableString(notes),
         status || 'active',
         normalizeNullableInteger(customerGroupId ?? customer_group_id),
@@ -297,6 +403,8 @@ async function updateCustomer(
     loyalty_points,
     creditBalance,
     credit_balance,
+    dateOfBirth,
+    date_of_birth,
     notes,
     status,
     customerGroupId,
@@ -312,9 +420,10 @@ async function updateCustomer(
            address = $5,
            loyalty_points = $6,
            credit_balance = $7,
-           notes = $8,
-           status = $9,
-           customer_group_id = $10,
+           date_of_birth = $8,
+           notes = $9,
+           status = $10,
+           customer_group_id = $11,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1
        RETURNING ${CUSTOMER_COLUMNS}`,
@@ -326,6 +435,7 @@ async function updateCustomer(
         normalizeNullableString(address),
         normalizeNonNegativeInteger(loyaltyPoints ?? loyalty_points),
         normalizeBalance(creditBalance ?? credit_balance),
+        normalizeNullableDate(dateOfBirth ?? date_of_birth),
         normalizeNullableString(notes),
         status || 'active',
         normalizeNullableInteger(customerGroupId ?? customer_group_id),
@@ -449,11 +559,13 @@ async function deleteCustomer(id) {
 module.exports = {
   adjustCreditBalance,
   adjustLoyaltyPoints,
+  calculateNextBirthday,
   createCustomer,
   deleteCustomer,
   findAll,
   findCreditBalanceById,
   findById,
+  findUpcomingBirthdayPromotions,
   findPurchaseHistoryById,
   mapCreditBalanceRow,
   mapCustomerRow,

@@ -7,6 +7,7 @@ class Customer {
     address,
     loyaltyPoints,
     creditBalance,
+    dateOfBirth,
     notes,
     status,
     customerGroupId,
@@ -20,6 +21,7 @@ class Customer {
     this.address = address;
     this.loyaltyPoints = loyaltyPoints;
     this.creditBalance = creditBalance;
+    this.dateOfBirth = dateOfBirth;
     this.notes = notes;
     this.status = status;
     this.customerGroupId = customerGroupId;
