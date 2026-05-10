@@ -6,9 +6,19 @@ import { InventoryListPage } from '@/pages/InventoryListPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { ProductListPage } from '@/pages/ProductListPage';
 import { StockTransferPage } from '@/pages/StockTransferPage';
+import { SupplierDetailPage } from '@/pages/SupplierDetailPage';
+import { SupplierListPage } from '@/pages/SupplierListPage';
 import type { LoginSession } from '@/services/authService';
+import type { Supplier } from '@/services/supplierService';
 
-type AppView = 'products' | 'inventory' | 'transfers' | 'categories' | 'brands' | 'employees';
+type AppView =
+  | 'products'
+  | 'inventory'
+  | 'transfers'
+  | 'categories'
+  | 'brands'
+  | 'suppliers'
+  | 'employees';
 
 const NAV_ITEMS: { label: string; value: AppView }[] = [
   { label: 'Products', value: 'products' },
@@ -16,12 +26,14 @@ const NAV_ITEMS: { label: string; value: AppView }[] = [
   { label: 'Transfers', value: 'transfers' },
   { label: 'Categories', value: 'categories' },
   { label: 'Brands', value: 'brands' },
+  { label: 'Suppliers', value: 'suppliers' },
   { label: 'Employees', value: 'employees' },
 ];
 
 export function App() {
   const [session, setSession] = useState<LoginSession | null>(null);
   const [activeView, setActiveView] = useState<AppView>('products');
+  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
 
   if (!session) {
     return <LoginPage onLogin={setSession} />;
@@ -33,7 +45,10 @@ export function App() {
         <button
           aria-current={activeView === item.value ? 'page' : undefined}
           key={item.value}
-          onClick={() => setActiveView(item.value)}
+          onClick={() => {
+            setActiveView(item.value);
+            setSelectedSupplier(null);
+          }}
           type="button"
         >
           {item.label}
@@ -49,6 +64,33 @@ export function App() {
         <EmployeeListPage
           accessToken={session.accessToken}
           userBranchId={session.user.branchId}
+          userName={session.user.name}
+        />
+      </>
+    );
+  }
+
+  if (activeView === 'suppliers' && selectedSupplier) {
+    return (
+      <>
+        {nav}
+        <SupplierDetailPage
+          accessToken={session.accessToken}
+          onBack={() => setSelectedSupplier(null)}
+          onSupplierChange={setSelectedSupplier}
+          supplier={selectedSupplier}
+        />
+      </>
+    );
+  }
+
+  if (activeView === 'suppliers') {
+    return (
+      <>
+        {nav}
+        <SupplierListPage
+          accessToken={session.accessToken}
+          onOpenSupplier={setSelectedSupplier}
           userName={session.user.name}
         />
       </>

@@ -37,6 +37,7 @@ button:disabled {
 .app-nav {
   display: flex;
   width: min(1120px, calc(100% - 64px));
+  flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
   margin: 24px auto -8px;
@@ -138,6 +139,12 @@ h1 {
   gap: 14px;
 }
 
+.supplier-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(132px, 1fr));
+  gap: 14px;
+}
+
 .table-panel {
   border: 1px solid #d8dee8;
   border-radius: 8px;
@@ -205,6 +212,14 @@ h1 {
   padding: 22px;
 }
 
+.supplier-form,
+.supplier-payment-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  padding: 22px;
+}
+
 .employee-form-alert,
 .form-actions {
   grid-column: 1 / -1;
@@ -214,6 +229,7 @@ h1 {
 .product-description,
 .catalog-form-wide,
 .catalog-description,
+.supplier-form-wide,
 .stock-transfer-wide,
 .stock-transfer-reference {
   grid-column: 1 / -1;
@@ -393,6 +409,14 @@ h1 {
 }
 
 .inventory-filters {
+  display: grid;
+  width: min(540px, 100%);
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 0.7fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.supplier-filters {
   display: grid;
   width: min(540px, 100%);
   grid-template-columns: minmax(220px, 1fr) minmax(160px, 0.7fr);
@@ -779,6 +803,109 @@ h1 {
   min-width: 980px;
 }
 
+.supplier-table {
+  min-width: 1040px;
+}
+
+.supplier-history-table {
+  min-width: 900px;
+}
+
+.supplier-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  gap: 22px;
+  margin-bottom: 22px;
+}
+
+.supplier-profile-panel,
+.supplier-account-panel {
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  padding: 22px;
+  background: #ffffff;
+  box-shadow: 0 14px 38px rgba(18, 30, 45, 0.08);
+}
+
+.supplier-profile-panel h2 {
+  margin: 0;
+  color: #111827;
+  font-size: 1.15rem;
+}
+
+.detail-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 18px 0 0;
+}
+
+.detail-list div {
+  border: 1px solid #e4e9f0;
+  border-radius: 6px;
+  padding: 12px;
+  background: #fbfcfd;
+}
+
+.detail-list dt {
+  color: #5c6675;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.detail-list dd {
+  margin: 6px 0 0;
+  color: #263241;
+  font-size: 0.94rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.supplier-account-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.account-stat {
+  border: 1px solid #e4e9f0;
+  border-radius: 6px;
+  padding: 14px;
+  background: #f7f8fa;
+}
+
+.account-stat span {
+  display: block;
+  color: #5c6675;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.account-stat strong {
+  display: block;
+  margin-top: 6px;
+  color: #173f3b;
+  font-size: 1.65rem;
+  line-height: 1;
+}
+
+.purchase-status-draft,
+.purchase-status-pending {
+  background: #fff7df;
+  color: #946200;
+}
+
+.purchase-status-ordered {
+  background: #e8f0ff;
+  color: #2554a4;
+}
+
+.purchase-status-received {
+  background: #e4f5ee;
+  color: #1f6b51;
+}
+
 .quantity-value {
   display: inline-flex;
   min-width: 52px;
@@ -1051,14 +1178,20 @@ h1 {
 
   .product-stats,
   .inventory-stats,
+  .supplier-stats,
   .inventory-filters,
+  .supplier-filters,
   .product-filters {
     grid-template-columns: 1fr;
   }
 
   .employee-form,
   .catalog-form,
+  .supplier-form,
+  .supplier-payment-form,
   .stock-transfer-form,
+  .supplier-detail-grid,
+  .detail-list,
   .transfer-summary {
     grid-template-columns: 1fr;
   }
