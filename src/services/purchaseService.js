@@ -39,13 +39,18 @@ function normalizePurchasePayload(payload) {
 }
 
 function mapPurchaseItemRow(row) {
+  const quantity = Number(row.quantity);
+  const receivedQuantity = Number(row.received_quantity ?? 0);
+
   return {
     id: row.id,
     purchaseOrderId: row.purchase_order_id,
     productId: row.product_id,
-    quantity: Number(row.quantity),
+    quantity,
+    receivedQuantity,
+    remainingQuantity: quantity - receivedQuantity,
     costPrice: Number(row.cost_price),
-    lineTotal: roundCurrency(Number(row.quantity) * Number(row.cost_price)),
+    lineTotal: roundCurrency(quantity * Number(row.cost_price)),
   };
 }
 
@@ -83,16 +88,17 @@ function mapForeignKeyError(error) {
   return new HttpError(400, 'Purchase order references an invalid record.');
 }
 
-async function findPurchaseItemsByOrderId(client, purchaseOrderId) {
+async function findPurchaseItemsByOrderId(client, purchaseOrderId, options = {}) {
   const itemResult = await client.query(
     `SELECT id,
             purchase_order_id,
             product_id,
             quantity,
+            received_quantity,
             cost_price
      FROM purchase_order_items
      WHERE purchase_order_id = $1
-     ORDER BY id ASC`,
+     ORDER BY id ASC${options.forUpdate ? ' FOR UPDATE' : ''}`,
     [purchaseOrderId]
   );
 
@@ -160,6 +166,7 @@ async function createPurchaseOrder(requester, payload) {
                  purchase_order_id,
                  product_id,
                  quantity,
+                 received_quantity,
                  cost_price`,
       itemValues
     );
@@ -237,7 +244,14 @@ async function approvePurchaseOrder(purchaseOrderId) {
   }
 }
 
-async function receiveInventoryItem(client, requester, purchaseOrderId, branchId, item) {
+async function receiveInventoryItem(
+  client,
+  requester,
+  purchaseOrderId,
+  branchId,
+  item,
+  receivedQuantity
+) {
   const inventoryResult = await client.query(
     `SELECT id,
             product_id,
@@ -259,7 +273,7 @@ async function receiveInventoryItem(client, requester, purchaseOrderId, branchId
 
   if (inventoryResult.rowCount === 0) {
     previousQuantity = 0;
-    newQuantity = item.quantity;
+    newQuantity = receivedQuantity;
 
     const insertedInventory = await client.query(
       `INSERT INTO inventory (
@@ -277,7 +291,7 @@ async function receiveInventoryItem(client, requester, purchaseOrderId, branchId
   } else {
     inventoryId = inventoryResult.rows[0].id;
     previousQuantity = Number(inventoryResult.rows[0].quantity);
-    newQuantity = previousQuantity + item.quantity;
+    newQuantity = previousQuantity + receivedQuantity;
 
     await client.query(
       `UPDATE inventory
@@ -318,7 +332,7 @@ async function receiveInventoryItem(client, requester, purchaseOrderId, branchId
       branchId,
       previousQuantity,
       newQuantity,
-      item.quantity,
+      receivedQuantity,
       reason,
       requester?.id ?? null,
     ]
@@ -329,8 +343,15 @@ async function receiveInventoryItem(client, requester, purchaseOrderId, branchId
 
 async function receivePurchaseOrder(requester, purchaseOrderId) {
   const normalizedRequester = purchaseOrderId === undefined ? null : requester;
-  const normalizedPurchaseOrderId =
-    purchaseOrderId === undefined ? requester : purchaseOrderId;
+  const normalizedPurchaseOrderId = purchaseOrderId === undefined ? requester : purchaseOrderId;
+  const receiptPayload =
+    purchaseOrderId === undefined
+      ? null
+      : Array.isArray(requester?.items)
+        ? requester.items
+        : Array.isArray(requester?.receiptItems)
+          ? requester.receiptItems
+          : null;
   const client = await database.pool.connect();
 
   try {
@@ -355,28 +376,54 @@ async function receivePurchaseOrder(requester, purchaseOrderId) {
       throw new HttpError(404, 'Purchase order not found.');
     }
 
-    if (orderResult.rows[0].status !== 'ordered') {
+    if (!['ordered', 'partially_received'].includes(orderResult.rows[0].status)) {
       throw new HttpError(400, 'Only ordered purchase orders can be received.');
     }
 
-    const items = await findPurchaseItemsByOrderId(client, normalizedPurchaseOrderId);
+    const items = await findPurchaseItemsByOrderId(client, normalizedPurchaseOrderId, {
+      forUpdate: true,
+    });
+    const receiptItems = normalizeReceiptItems(receiptPayload, items);
     const adjustments = [];
 
-    for (const item of items) {
+    for (const receiptItem of receiptItems) {
+      const item = receiptItem.item;
+
       adjustments.push(
         await receiveInventoryItem(
           client,
           normalizedRequester,
           normalizedPurchaseOrderId,
           orderResult.rows[0].branch_id,
-          item
+          item,
+          receiptItem.quantity
         )
+      );
+
+      await client.query(
+        `UPDATE purchase_order_items
+         SET received_quantity = received_quantity + $2
+         WHERE id = $1`,
+        [item.id, receiptItem.quantity]
       );
     }
 
+    const updatedItems = items.map((item) => {
+      const receiptItem = receiptItems.find((currentItem) => currentItem.item.id === item.id);
+      const receivedQuantity = item.receivedQuantity + (receiptItem?.quantity ?? 0);
+
+      return {
+        ...item,
+        receivedQuantity,
+        remainingQuantity: item.quantity - receivedQuantity,
+      };
+    });
+    const nextStatus = updatedItems.every((item) => item.remainingQuantity === 0)
+      ? 'received'
+      : 'partially_received';
     const receivedResult = await client.query(
       `UPDATE purchase_orders
-       SET status = 'received'
+       SET status = $2
        WHERE id = $1
        RETURNING id,
                  supplier_id,
@@ -386,13 +433,13 @@ async function receivePurchaseOrder(requester, purchaseOrderId) {
                  notes,
                  created_by,
                  created_at`,
-      [normalizedPurchaseOrderId]
+      [normalizedPurchaseOrderId, nextStatus]
     );
 
     await client.query('COMMIT');
 
     return {
-      ...mapPurchaseOrderRow(receivedResult.rows[0], items),
+      ...mapPurchaseOrderRow(receivedResult.rows[0], updatedItems),
       inventoryAdjustments: adjustments.map((row) => ({
         id: row.id,
         inventoryId: row.inventory_id,
@@ -414,6 +461,64 @@ async function receivePurchaseOrder(requester, purchaseOrderId) {
   } finally {
     client.release();
   }
+}
+
+function normalizeReceiptItems(receiptPayload, items) {
+  if (!receiptPayload) {
+    return items
+      .filter((item) => item.remainingQuantity > 0)
+      .map((item) => ({
+        item,
+        quantity: item.remainingQuantity,
+      }));
+  }
+
+  if (!Array.isArray(receiptPayload) || receiptPayload.length === 0) {
+    throw new HttpError(400, 'At least one purchase item receipt is required.');
+  }
+
+  const itemMap = new Map(items.map((item) => [Number(item.id), item]));
+  const receiptItems = receiptPayload.map((receiptItem, index) => {
+    const purchaseOrderItemId = Number(
+      receiptItem.purchaseOrderItemId ?? receiptItem.purchase_order_item_id ?? receiptItem.itemId
+    );
+    const quantity = Number(
+      receiptItem.quantityReceived ?? receiptItem.quantity_received ?? receiptItem.quantity
+    );
+    const label = `Receipt item ${index + 1}`;
+
+    if (!Number.isInteger(purchaseOrderItemId) || purchaseOrderItemId <= 0) {
+      throw new HttpError(400, `${label} purchase order item ID must be a positive integer.`);
+    }
+
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw new HttpError(400, `${label} quantity must be a positive integer.`);
+    }
+
+    const item = itemMap.get(purchaseOrderItemId);
+
+    if (!item) {
+      throw new HttpError(404, `${label} purchase order item not found.`);
+    }
+
+    if (quantity > item.remainingQuantity) {
+      throw new HttpError(400, `${label} quantity exceeds the remaining quantity.`);
+    }
+
+    return { item, quantity };
+  });
+  const duplicateItem = receiptItems.find((receiptItem, index) =>
+    receiptItems.some(
+      (otherItem, otherIndex) =>
+        otherIndex !== index && otherItem.item.id === receiptItem.item.id
+    )
+  );
+
+  if (duplicateItem) {
+    throw new HttpError(400, 'Each purchase item can be received only once per request.');
+  }
+
+  return receiptItems;
 }
 
 module.exports = {

@@ -5,6 +5,8 @@ export type PurchaseOrderItem = {
   purchaseOrderId: number;
   productId: number;
   quantity: number;
+  receivedQuantity: number;
+  remainingQuantity: number;
   costPrice: number;
   lineTotal: number;
 };
@@ -35,6 +37,15 @@ export type PurchaseOrderPayload = {
   items: PurchaseOrderItemPayload[];
 };
 
+export type PurchaseOrderReceiveItemPayload = {
+  purchaseOrderItemId: number;
+  quantityReceived: number;
+};
+
+export type PurchaseOrderReceivePayload = {
+  items: PurchaseOrderReceiveItemPayload[];
+};
+
 type PurchaseOrderResponse = {
   data: PurchaseOrder;
 };
@@ -60,8 +71,13 @@ export function approvePurchaseOrder(accessToken: string, purchaseOrderId: numbe
   });
 }
 
-export function receivePurchaseOrder(accessToken: string, purchaseOrderId: number) {
+export function receivePurchaseOrder(
+  accessToken: string,
+  purchaseOrderId: number,
+  payload?: PurchaseOrderReceivePayload,
+) {
   return apiRequest<PurchaseOrderResponse>(`/purchases/${purchaseOrderId}/receive`, {
+    body: payload ? JSON.stringify(payload) : undefined,
     headers: authorizedHeaders(accessToken),
     method: 'POST',
   });

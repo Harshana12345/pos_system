@@ -7,6 +7,7 @@ import {
   createPurchaseOrder,
   receivePurchaseOrder,
   type PurchaseOrder,
+  type PurchaseOrderReceiveItemPayload,
   type PurchaseOrderItemPayload,
   type PurchaseOrderPayload,
 } from '@/services/purchaseService';
@@ -143,6 +144,9 @@ export function PurchaseOrderPage({
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [processingOrderId, setProcessingOrderId] = useState<number | null>(null);
+  const [receivingOrder, setReceivingOrder] = useState<PurchaseOrder | null>(null);
+  const [receiveQuantities, setReceiveQuantities] = useState<Record<number, string>>({});
+  const [receiveError, setReceiveError] = useState('');
 
   useEffect(() => {
     let isMounted = true;
@@ -211,6 +215,9 @@ export function PurchaseOrderPage({
   }, 0);
   const draftOrders = recentOrders.filter((order) => order.status === 'draft').length;
   const orderedOrders = recentOrders.filter((order) => order.status === 'ordered').length;
+  const receivableOrders = recentOrders.filter((order) =>
+    ['ordered', 'partially_received'].includes(order.status),
+  ).length;
 
   function updateFormValue(field: keyof Omit<PurchaseFormValues, 'items'>, value: string) {
     setFormValues((currentValues) => ({
@@ -382,15 +389,12 @@ export function PurchaseOrderPage({
     }
   }
 
-  async function updateOrderStatus(order: PurchaseOrder, action: 'approve' | 'receive') {
+  async function updateOrderStatus(order: PurchaseOrder) {
     setProcessingOrderId(order.id);
     setError('');
 
     try {
-      const response =
-        action === 'approve'
-          ? await approvePurchaseOrder(accessToken, order.id)
-          : await receivePurchaseOrder(accessToken, order.id);
+      const response = await approvePurchaseOrder(accessToken, order.id);
 
       setRecentOrders((currentOrders) =>
         currentOrders.map((currentOrder) =>
@@ -407,6 +411,116 @@ export function PurchaseOrderPage({
         setError(statusError.message);
       } else {
         setError('Unable to update purchase order status. Check your connection and try again.');
+      }
+    } finally {
+      setProcessingOrderId(null);
+    }
+  }
+
+  function openReceiveFlow(order: PurchaseOrder) {
+    setReceivingOrder(order);
+    setReceiveError('');
+    setReceiveQuantities(
+      Object.fromEntries(
+        order.items.map((item) => [
+          item.id,
+          String(Math.max(item.remainingQuantity ?? item.quantity - (item.receivedQuantity ?? 0), 0)),
+        ]),
+      ),
+    );
+  }
+
+  function closeReceiveFlow() {
+    if (processingOrderId !== null) {
+      return;
+    }
+
+    setReceivingOrder(null);
+    setReceiveQuantities({});
+    setReceiveError('');
+  }
+
+  function updateReceiveQuantity(itemId: number, value: string) {
+    setReceiveQuantities((currentQuantities) => ({
+      ...currentQuantities,
+      [itemId]: value,
+    }));
+  }
+
+  function buildReceivePayload(order: PurchaseOrder): PurchaseOrderReceiveItemPayload[] | null {
+    try {
+      const items = order.items
+        .map((item, index) => {
+          const quantityReceived = Number(receiveQuantities[item.id] ?? 0);
+          const remainingQuantity = item.remainingQuantity ?? item.quantity - (item.receivedQuantity ?? 0);
+
+          if (!Number.isInteger(quantityReceived) || quantityReceived < 0) {
+            throw new Error(`Line ${index + 1} receive quantity must be zero or a whole number.`);
+          }
+
+          if (quantityReceived > remainingQuantity) {
+            throw new Error(`Line ${index + 1} receive quantity cannot exceed remaining units.`);
+          }
+
+          return {
+            purchaseOrderItemId: item.id,
+            quantityReceived,
+          };
+        })
+        .filter((item) => item.quantityReceived > 0);
+
+      if (items.length === 0) {
+        setReceiveError('Enter a receive quantity for at least one line.');
+        return null;
+      }
+
+      return items;
+    } catch (payloadError) {
+      setReceiveError(
+        payloadError instanceof Error ? payloadError.message : 'Receipt quantities are invalid.',
+      );
+      return null;
+    }
+  }
+
+  async function submitReceiveFlow(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!receivingOrder) {
+      return;
+    }
+
+    setReceiveError('');
+    const items = buildReceivePayload(receivingOrder);
+
+    if (!items) {
+      return;
+    }
+
+    setProcessingOrderId(receivingOrder.id);
+
+    try {
+      const response = await receivePurchaseOrder(accessToken, receivingOrder.id, { items });
+
+      setRecentOrders((currentOrders) =>
+        currentOrders.map((currentOrder) =>
+          currentOrder.id === response.data.id ? response.data : currentOrder,
+        ),
+      );
+
+      if (editingOrder?.id === response.data.id) {
+        setEditingOrder(response.data);
+        setFormValues(getFormValues(response.data));
+      }
+
+      setReceivingOrder(null);
+      setReceiveQuantities({});
+      setFormSuccess(`Receipt saved for PO-${response.data.id}.`);
+    } catch (receiveFlowError) {
+      if (receiveFlowError instanceof ApiError) {
+        setReceiveError(receiveFlowError.message);
+      } else {
+        setReceiveError('Unable to receive purchase order. Check your connection and try again.');
       }
     } finally {
       setProcessingOrderId(null);
@@ -435,8 +549,8 @@ export function PurchaseOrderPage({
             <p>Draft</p>
           </div>
           <div className="employee-stat">
-            <span>{orderedOrders}</span>
-            <p>Ordered</p>
+            <span>{receivableOrders || orderedOrders}</span>
+            <p>Receivable</p>
           </div>
         </div>
       </section>
@@ -681,6 +795,12 @@ export function PurchaseOrderPage({
                     {order.items.length} lines
                     <span className="employee-email">
                       {order.items.reduce((total, item) => total + item.quantity, 0)} units
+                      {' / '}
+                      {order.items.reduce(
+                        (total, item) => total + (item.receivedQuantity ?? 0),
+                        0,
+                      )}{' '}
+                      received
                     </span>
                   </td>
                   <td>{formatCurrency(order.totalAmount)}</td>
@@ -698,15 +818,18 @@ export function PurchaseOrderPage({
                       <button
                         className="table-action"
                         disabled={order.status !== 'draft' || processingOrderId === order.id}
-                        onClick={() => updateOrderStatus(order, 'approve')}
+                        onClick={() => updateOrderStatus(order)}
                         type="button"
                       >
                         Approve
                       </button>
                       <button
                         className="table-action"
-                        disabled={order.status !== 'ordered' || processingOrderId === order.id}
-                        onClick={() => updateOrderStatus(order, 'receive')}
+                        disabled={
+                          !['ordered', 'partially_received'].includes(order.status) ||
+                          processingOrderId === order.id
+                        }
+                        onClick={() => openReceiveFlow(order)}
                         type="button"
                       >
                         Receive
@@ -723,6 +846,94 @@ export function PurchaseOrderPage({
           <div className="table-message">No purchase orders created in this session.</div>
         ) : null}
       </section>
+
+      {receivingOrder ? (
+        <div className="modal-backdrop" role="presentation">
+          <form
+            aria-labelledby="receive-modal-title"
+            className="modal-panel receive-modal"
+            onSubmit={submitReceiveFlow}
+          >
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Receive Stock</p>
+                <h2 id="receive-modal-title">PO-{receivingOrder.id}</h2>
+                <p>Enter the units arriving now for each purchase order line.</p>
+              </div>
+              <button
+                aria-label="Close receive dialog"
+                className="modal-close"
+                disabled={processingOrderId === receivingOrder.id}
+                onClick={closeReceiveFlow}
+                type="button"
+              >
+                x
+              </button>
+            </div>
+
+            <div className="receive-line-list">
+              {receivingOrder.items.map((item, index) => {
+                const receivedQuantity = item.receivedQuantity ?? 0;
+                const remainingQuantity = item.remainingQuantity ?? item.quantity - receivedQuantity;
+
+                return (
+                  <div className="receive-line-row" key={item.id}>
+                    <div>
+                      <strong>
+                        {products.find((product) => product.id === item.productId)?.name ??
+                          `Product ${item.productId}`}
+                      </strong>
+                      <span className="employee-email">Line {index + 1}</span>
+                    </div>
+                    <div className="receive-line-metrics">
+                      <span>Ordered {item.quantity}</span>
+                      <span>Received {receivedQuantity}</span>
+                      <span>Remaining {remainingQuantity}</span>
+                    </div>
+                    <label className="field" htmlFor={`receive-quantity-${item.id}`}>
+                      Receive Now
+                      <input
+                        id={`receive-quantity-${item.id}`}
+                        max={remainingQuantity}
+                        min="0"
+                        onChange={(event) => updateReceiveQuantity(item.id, event.target.value)}
+                        required
+                        step="1"
+                        type="number"
+                        value={receiveQuantities[item.id] ?? ''}
+                      />
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+
+            {receiveError ? (
+              <div className="form-alert receive-alert" role="alert">
+                {receiveError}
+              </div>
+            ) : null}
+
+            <div className="modal-actions">
+              <button
+                className="secondary-action"
+                disabled={processingOrderId === receivingOrder.id}
+                onClick={closeReceiveFlow}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-action"
+                disabled={processingOrderId === receivingOrder.id}
+                type="submit"
+              >
+                {processingOrderId === receivingOrder.id ? 'Receiving...' : 'Save Receipt'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </MainLayout>
   );
 }

@@ -52,7 +52,7 @@ async function receivePurchase(req, res, next) {
 
   try {
     const purchase = await purchaseService.receivePurchaseOrder(
-      req.user,
+      { ...req.user, items: req.body?.items },
       Number(req.params.id)
     );
 

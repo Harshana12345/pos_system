@@ -222,6 +222,7 @@ test('approvePurchaseOrder approves a pending order in a transaction', {
               purchase_order_id: params[0],
               product_id: '10',
               quantity: '2',
+              received_quantity: '0',
               cost_price: '5.00',
             },
           ],
@@ -337,6 +338,7 @@ test('receivePurchaseOrder marks order received and updates inventory', {
               purchase_order_id: params[0],
               product_id: '10',
               quantity: '2',
+              received_quantity: '0',
               cost_price: '5.00',
             },
           ],
@@ -359,6 +361,10 @@ test('receivePurchaseOrder marks order received and updates inventory', {
       }
 
       if (/UPDATE inventory/.test(sql)) {
+        return { rowCount: 1, rows: [] };
+      }
+
+      if (/UPDATE purchase_order_items/.test(sql)) {
         return { rowCount: 1, rows: [] };
       }
 
@@ -391,7 +397,7 @@ test('receivePurchaseOrder marks order received and updates inventory', {
               id: params[0],
               supplier_id: '1',
               branch_id: '2',
-              status: 'received',
+              status: params[1],
               total_amount: '10.00',
               notes: null,
               created_by: '42',
@@ -424,6 +430,7 @@ test('receivePurchaseOrder marks order received and updates inventory', {
       queries[4].sql,
       queries[5].sql,
       queries[6].sql,
+      queries[7].sql,
       'COMMIT',
     ]
   );
@@ -441,9 +448,13 @@ test('receivePurchaseOrder marks order received and updates inventory', {
     'Purchase order 50 received',
     7,
   ]);
-  assert.match(queries[6].sql, /SET status = 'received'/);
+  assert.deepEqual(queries[6].params, ['80', 2]);
+  assert.match(queries[7].sql, /SET status = \$2/);
+  assert.deepEqual(queries[7].params, [50, 'received']);
   assert.equal(purchase.status, 'received');
   assert.equal(purchase.items[0].lineTotal, 10);
+  assert.equal(purchase.items[0].receivedQuantity, 2);
+  assert.equal(purchase.items[0].remainingQuantity, 0);
   assert.equal(purchase.inventoryAdjustments[0].previousQuantity, 4);
   assert.equal(purchase.inventoryAdjustments[0].newQuantity, 6);
   assert.equal(purchase.inventoryAdjustments[0].quantityChange, 2);
@@ -487,6 +498,7 @@ test('receivePurchaseOrder creates inventory rows for first receipt', {
               purchase_order_id: params[0],
               product_id: '10',
               quantity: '2',
+              received_quantity: '0',
               cost_price: '5.00',
             },
           ],
@@ -522,6 +534,10 @@ test('receivePurchaseOrder creates inventory rows for first receipt', {
         };
       }
 
+      if (/UPDATE purchase_order_items/.test(sql)) {
+        return { rowCount: 1, rows: [] };
+      }
+
       if (/UPDATE purchase_orders/.test(sql)) {
         return {
           rowCount: 1,
@@ -530,7 +546,7 @@ test('receivePurchaseOrder creates inventory rows for first receipt', {
               id: params[0],
               supplier_id: '1',
               branch_id: '2',
-              status: 'received',
+              status: params[1],
               total_amount: '10.00',
               notes: null,
               created_by: '42',

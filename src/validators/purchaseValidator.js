@@ -1,4 +1,10 @@
-const VALID_PURCHASE_STATUSES = new Set(['draft', 'ordered', 'received', 'cancelled']);
+const VALID_PURCHASE_STATUSES = new Set([
+  'draft',
+  'ordered',
+  'partially_received',
+  'received',
+  'cancelled',
+]);
 
 function isPlainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
@@ -35,7 +41,9 @@ function validatePurchasePayload(payload) {
   }
 
   if (payload.status !== undefined && !VALID_PURCHASE_STATUSES.has(payload.status)) {
-    errors.push('Purchase status must be draft, ordered, received, or cancelled.');
+    errors.push(
+      'Purchase status must be draft, ordered, partially_received, received, or cancelled.'
+    );
   }
 
   if (

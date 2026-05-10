@@ -33,7 +33,7 @@ test('validatePurchasePayload rejects missing purchase order fields', () => {
   assert.deepEqual(errors, [
     'Supplier ID must be a positive integer.',
     'Branch ID must be a positive integer.',
-    'Purchase status must be draft, ordered, received, or cancelled.',
+    'Purchase status must be draft, ordered, partially_received, received, or cancelled.',
     'Purchase notes must be a string.',
     'At least one purchase item is required.',
   ]);
