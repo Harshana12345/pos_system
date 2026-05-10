@@ -1,7 +1,39 @@
 const assert = require('node:assert');
 const test = require('node:test');
 
-const { validateSalePayload } = require('../src/validators/saleValidator');
+const {
+  validateSaleFilters,
+  validateSalePayload,
+} = require('../src/validators/saleValidator');
+
+test('validateSaleFilters accepts supported sales query filters', () => {
+  const errors = validateSaleFilters({
+    startDate: '2026-05-01',
+    end_date: '2026-05-10T23:59:59.000Z',
+    cashier: '3',
+    branch_id: '2',
+    status: 'completed',
+  });
+
+  assert.deepEqual(errors, []);
+});
+
+test('validateSaleFilters rejects invalid sales query filters', () => {
+  const errors = validateSaleFilters({
+    dateFrom: '2026-05-11',
+    dateTo: '2026-05-10',
+    cashier_id: 'cashier',
+    branchId: '0',
+    status: '   ',
+  });
+
+  assert.deepEqual(errors, [
+    'Branch ID must be a positive integer.',
+    'Cashier ID must be a positive integer.',
+    'Sale status must be a non-empty string.',
+    'Date from must be before or equal to date to.',
+  ]);
+});
 
 test('validateSalePayload accepts a completed sale payload', () => {
   const errors = validateSalePayload({

@@ -31,6 +31,33 @@ function normalizePaymentDate(value) {
   return new Date(value);
 }
 
+function normalizeSaleFilters(filters = {}) {
+  return {
+    branchId: filters.branchId ?? filters.branch_id,
+    cashierId:
+      filters.cashierId ??
+      filters.cashier_id ??
+      filters.cashier ??
+      filters.createdBy ??
+      filters.created_by,
+    status: filters.status,
+    dateFrom:
+      filters.dateFrom ??
+      filters.date_from ??
+      filters.startDate ??
+      filters.start_date ??
+      filters.createdFrom ??
+      filters.created_from,
+    dateTo:
+      filters.dateTo ??
+      filters.date_to ??
+      filters.endDate ??
+      filters.end_date ??
+      filters.createdTo ??
+      filters.created_to,
+  };
+}
+
 function normalizeSalePayload(payload) {
   const items = payload.items.map((item) => {
     const quantity = Number(item.quantity);
@@ -415,10 +442,65 @@ async function createCompletedSale(requester, payload) {
   }
 }
 
+async function findAll(filters = {}) {
+  const normalizedFilters = normalizeSaleFilters(filters);
+  const params = [];
+  const where = [];
+
+  if (normalizedFilters.dateFrom !== undefined) {
+    params.push(normalizedFilters.dateFrom);
+    where.push(`created_at >= $${params.length}`);
+  }
+
+  if (normalizedFilters.dateTo !== undefined) {
+    params.push(normalizedFilters.dateTo);
+    where.push(`created_at <= $${params.length}`);
+  }
+
+  if (normalizedFilters.cashierId !== undefined) {
+    params.push(Number(normalizedFilters.cashierId));
+    where.push(`created_by = $${params.length}`);
+  }
+
+  if (normalizedFilters.branchId !== undefined) {
+    params.push(Number(normalizedFilters.branchId));
+    where.push(`branch_id = $${params.length}`);
+  }
+
+  if (normalizedFilters.status !== undefined) {
+    params.push(normalizedFilters.status.trim());
+    where.push(`status = $${params.length}`);
+  }
+
+  const result = await database.query(
+    `SELECT id,
+            customer_id,
+            branch_id,
+            status,
+            subtotal,
+            discount_amount,
+            tax_amount,
+            total_amount,
+            paid_amount,
+            balance_amount,
+            payment_status,
+            created_by,
+            created_at
+     FROM sales
+     ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY created_at DESC, id DESC`,
+    params
+  );
+
+  return result.rows.map((row) => mapSaleRow(row));
+}
+
 module.exports = {
   createCompletedSale,
+  findAll,
   mapPaymentRow,
   mapSaleItemRow,
   mapSaleRow,
+  normalizeSaleFilters,
   normalizeSalePayload,
 };

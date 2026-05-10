@@ -9,6 +9,71 @@ try {
   dependenciesAvailable = false;
 }
 
+test('findAll filters sales by date range, cashier, branch, and status', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const saleService = require('../src/services/saleService');
+  const originalQuery = database.query;
+  const queries = [];
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params = []) => {
+    queries.push({ sql, params });
+
+    return {
+      rowCount: 1,
+      rows: [
+        {
+          id: '70',
+          customer_id: '1',
+          branch_id: '2',
+          status: 'completed',
+          subtotal: '19.00',
+          discount_amount: '1.00',
+          tax_amount: '0.50',
+          total_amount: '18.50',
+          paid_amount: '18.50',
+          balance_amount: '0.00',
+          payment_status: 'paid',
+          created_by: '42',
+          created_at: new Date('2026-05-10T00:00:00.000Z'),
+        },
+      ],
+    };
+  };
+
+  const sales = await saleService.findAll({
+    startDate: '2026-05-01',
+    endDate: '2026-05-10T23:59:59.000Z',
+    cashier: '42',
+    branch_id: '2',
+    status: 'completed',
+  });
+
+  assert.match(queries[0].sql, /FROM sales/);
+  assert.match(queries[0].sql, /created_at >= \$1/);
+  assert.match(queries[0].sql, /created_at <= \$2/);
+  assert.match(queries[0].sql, /created_by = \$3/);
+  assert.match(queries[0].sql, /branch_id = \$4/);
+  assert.match(queries[0].sql, /status = \$5/);
+  assert.match(queries[0].sql, /ORDER BY created_at DESC, id DESC/);
+  assert.deepEqual(queries[0].params, [
+    '2026-05-01',
+    '2026-05-10T23:59:59.000Z',
+    42,
+    2,
+    'completed',
+  ]);
+  assert.equal(sales.length, 1);
+  assert.equal(sales[0].id, '70');
+  assert.equal(sales[0].totalAmount, 18.5);
+  assert.equal(sales[0].createdBy, '42');
+});
+
 test('createCompletedSale creates sale, deducts inventory, and records payment', {
   skip: !dependenciesAvailable,
 }, async (t) => {

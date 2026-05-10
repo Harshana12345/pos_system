@@ -20,8 +20,74 @@ function isPositiveNumber(value) {
   return Number.isFinite(normalized) && normalized > 0;
 }
 
+function isValidDate(value) {
+  if (value === null || value === '') {
+    return false;
+  }
+
+  return !Number.isNaN(Date.parse(value));
+}
+
 function isOptionalString(value) {
   return value === undefined || value === null || typeof value === 'string';
+}
+
+function validateSaleFilters(filters = {}) {
+  const errors = [];
+  const branchId = filters.branchId ?? filters.branch_id;
+  const cashierId =
+    filters.cashierId ??
+    filters.cashier_id ??
+    filters.cashier ??
+    filters.createdBy ??
+    filters.created_by;
+  const dateFrom =
+    filters.dateFrom ??
+    filters.date_from ??
+    filters.startDate ??
+    filters.start_date ??
+    filters.createdFrom ??
+    filters.created_from;
+  const dateTo =
+    filters.dateTo ??
+    filters.date_to ??
+    filters.endDate ??
+    filters.end_date ??
+    filters.createdTo ??
+    filters.created_to;
+  const status = filters.status;
+
+  if (branchId !== undefined && !isPositiveInteger(branchId)) {
+    errors.push('Branch ID must be a positive integer.');
+  }
+
+  if (cashierId !== undefined && !isPositiveInteger(cashierId)) {
+    errors.push('Cashier ID must be a positive integer.');
+  }
+
+  if (status !== undefined && (typeof status !== 'string' || status.trim().length === 0)) {
+    errors.push('Sale status must be a non-empty string.');
+  }
+
+  if (dateFrom !== undefined && !isValidDate(dateFrom)) {
+    errors.push('Date from must be a valid date.');
+  }
+
+  if (dateTo !== undefined && !isValidDate(dateTo)) {
+    errors.push('Date to must be a valid date.');
+  }
+
+  if (
+    dateFrom !== undefined &&
+    dateTo !== undefined &&
+    isValidDate(dateFrom) &&
+    isValidDate(dateTo) &&
+    new Date(dateFrom) > new Date(dateTo)
+  ) {
+    errors.push('Date from must be before or equal to date to.');
+  }
+
+  return errors;
 }
 
 function validateSalePayload(payload) {
@@ -126,5 +192,6 @@ function validateSalePayload(payload) {
 }
 
 module.exports = {
+  validateSaleFilters,
   validateSalePayload,
 };
