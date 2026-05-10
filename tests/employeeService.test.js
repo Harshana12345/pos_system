@@ -276,7 +276,8 @@ test(
     });
 
     assert.deepEqual(employees, []);
-    assert.match(queries[1].sql, /WHERE e\.branch_id = \$1/);
+    assert.match(queries[1].sql, /e\.deleted_at IS NULL/);
+    assert.match(queries[1].sql, /e\.branch_id = \$1/);
     assert.deepEqual(queries[1].params, [7]);
   }
 );
@@ -332,7 +333,8 @@ test(
       branchId: 7,
     });
 
-    assert.doesNotMatch(queries[1].sql, /WHERE e\.branch_id/);
+    assert.match(queries[1].sql, /WHERE e\.deleted_at IS NULL/);
+    assert.doesNotMatch(queries[1].sql, /AND e\.branch_id/);
     assert.deepEqual(queries[1].params, []);
     assert.equal(employees[0].user.name, 'Ada Lovelace');
     assert.equal(employees[0].branch.name, 'Main');
@@ -531,6 +533,177 @@ test(
       {
         message: 'Employee not found.',
         statusCode: 404,
+      }
+    );
+
+    assert.equal(queries.at(-1).sql, 'ROLLBACK');
+  }
+);
+
+test(
+  'deleteEmployee soft deletes an active employee',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalConnect = database.pool.connect;
+    const queries = [];
+    let released = false;
+
+    t.after(() => {
+      database.pool.connect = originalConnect;
+    });
+
+    database.pool.connect = async () => ({
+      query: async (sql, params = []) => {
+        queries.push({ sql, params });
+
+        if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+          return { rowCount: 0, rows: [] };
+        }
+
+        if (/SELECT id, branch_id/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: '21', branch_id: '4' }] };
+        }
+
+        if (/FROM roles/.test(sql)) {
+          return { rowCount: 1, rows: [{ name: 'admin' }] };
+        }
+
+        if (/UPDATE employees/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: '21' }] };
+        }
+
+        throw new Error(`Unexpected query: ${sql}`);
+      },
+      release: () => {
+        released = true;
+      },
+    });
+
+    await employeeService.deleteEmployee(
+      {
+        roleId: 1,
+        branchId: 2,
+      },
+      '21'
+    );
+
+    const findEmployeeQuery = queries.find(({ sql }) => /SELECT id, branch_id/.test(sql));
+    const updateEmployeeQuery = queries.find(({ sql }) => /UPDATE employees/.test(sql));
+
+    assert.equal(queries[0].sql, 'BEGIN');
+    assert.equal(queries.at(-1).sql, 'COMMIT');
+    assert.match(findEmployeeQuery.sql, /deleted_at IS NULL/);
+    assert.match(updateEmployeeQuery.sql, /deleted_at = CURRENT_TIMESTAMP/);
+    assert.match(updateEmployeeQuery.sql, /updated_at = CURRENT_TIMESTAMP/);
+    assert.match(updateEmployeeQuery.sql, /deleted_at IS NULL/);
+    assert.equal(updateEmployeeQuery.params[0], 21);
+    assert.equal(released, true);
+  }
+);
+
+test(
+  'deleteEmployee rejects missing or already deleted employees',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalConnect = database.pool.connect;
+    const queries = [];
+
+    t.after(() => {
+      database.pool.connect = originalConnect;
+    });
+
+    database.pool.connect = async () => ({
+      query: async (sql, params = []) => {
+        queries.push({ sql, params });
+
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') {
+          return { rowCount: 0, rows: [] };
+        }
+
+        if (/SELECT id, branch_id/.test(sql)) {
+          return { rowCount: 0, rows: [] };
+        }
+
+        throw new Error('Authorization and updates should not run when employee is missing.');
+      },
+      release: () => {},
+    });
+
+    await assert.rejects(
+      () =>
+        employeeService.deleteEmployee(
+          {
+            roleId: 1,
+            branchId: 2,
+          },
+          '99'
+        ),
+      {
+        message: 'Employee not found.',
+        statusCode: 404,
+      }
+    );
+
+    assert.equal(queries.at(-1).sql, 'ROLLBACK');
+  }
+);
+
+test(
+  'deleteEmployee restricts managers to their own branch',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalConnect = database.pool.connect;
+    const queries = [];
+
+    t.after(() => {
+      database.pool.connect = originalConnect;
+    });
+
+    database.pool.connect = async () => ({
+      query: async (sql, params = []) => {
+        queries.push({ sql, params });
+
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') {
+          return { rowCount: 0, rows: [] };
+        }
+
+        if (/SELECT id, branch_id/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: '21', branch_id: '8' }] };
+        }
+
+        if (/FROM roles/.test(sql)) {
+          return { rowCount: 1, rows: [{ name: 'manager' }] };
+        }
+
+        throw new Error('Employee update should not run after authorization fails.');
+      },
+      release: () => {},
+    });
+
+    await assert.rejects(
+      () =>
+        employeeService.deleteEmployee(
+          {
+            roleId: 2,
+            branchId: 7,
+          },
+          '21'
+        ),
+      {
+        message: 'Managers can only delete employees for their branch.',
+        statusCode: 403,
       }
     );
 

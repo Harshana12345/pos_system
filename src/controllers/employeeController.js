@@ -59,4 +59,21 @@ async function updateEmployee(req, res, next) {
   }
 }
 
-module.exports = { createEmployee, listEmployees, updateEmployee };
+async function deleteEmployee(req, res, next) {
+  const errors = validateEmployeeId(req.params.id);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    await employeeService.deleteEmployee(req.user, req.params.id);
+
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = { createEmployee, deleteEmployee, listEmployees, updateEmployee };

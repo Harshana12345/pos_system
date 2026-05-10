@@ -94,6 +94,29 @@ async function ensureRequesterCanUpdateEmployee(client, requester, currentBranch
   }
 }
 
+async function ensureRequesterCanDeleteEmployee(client, requester, branchId) {
+  const result = await client.query(
+    `SELECT name
+     FROM roles
+     WHERE id = $1
+     LIMIT 1`,
+    [Number(requester.roleId)]
+  );
+  const requesterRoleName = result.rows[0]?.name;
+
+  if (!requesterRoleName) {
+    throw new HttpError(403, 'Authenticated user role is not recognized.');
+  }
+
+  if (!['admin', 'manager'].includes(requesterRoleName)) {
+    throw new HttpError(403, 'You are not allowed to delete employees.');
+  }
+
+  if (requesterRoleName === 'manager' && Number(requester.branchId) !== Number(branchId)) {
+    throw new HttpError(403, 'Managers can only delete employees for their branch.');
+  }
+}
+
 async function ensureRoleExists(client, roleId) {
   const result = await client.query(
     `SELECT id
@@ -230,6 +253,7 @@ async function updateEmployee(
       `SELECT id, user_id, branch_id
        FROM employees
        WHERE id = $1
+         AND deleted_at IS NULL
        LIMIT 1`,
       [Number(id)]
     );
@@ -339,10 +363,11 @@ async function findAllForUser(user) {
   }
 
   const params = [];
-  const branchFilter = requesterRoleName === 'manager' ? 'WHERE e.branch_id = $1' : '';
+  const conditions = ['e.deleted_at IS NULL'];
 
   if (requesterRoleName === 'manager') {
     params.push(Number(user.branchId));
+    conditions.push(`e.branch_id = $${params.length}`);
   }
 
   const result = await database.query(
@@ -365,7 +390,7 @@ async function findAllForUser(user) {
      INNER JOIN users u ON u.id = e.user_id
      INNER JOIN roles r ON r.id = e.role_id
      INNER JOIN branches b ON b.id = e.branch_id
-     ${branchFilter}
+     WHERE ${conditions.join(' AND ')}
      ORDER BY e.id ASC`,
     params
   );
@@ -373,4 +398,48 @@ async function findAllForUser(user) {
   return result.rows.map(mapEmployeeRow);
 }
 
-module.exports = { createEmployee, findAllForUser, mapEmployeeRow, updateEmployee };
+async function deleteEmployee(requester, id) {
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const existingResult = await client.query(
+      `SELECT id, branch_id
+       FROM employees
+       WHERE id = $1
+         AND deleted_at IS NULL
+       LIMIT 1`,
+      [Number(id)]
+    );
+
+    if (existingResult.rowCount === 0) {
+      throw new HttpError(404, 'Employee not found.');
+    }
+
+    await ensureRequesterCanDeleteEmployee(client, requester, existingResult.rows[0].branch_id);
+
+    const result = await client.query(
+      `UPDATE employees
+       SET deleted_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+         AND deleted_at IS NULL
+       RETURNING id`,
+      [Number(id)]
+    );
+
+    if (result.rowCount === 0) {
+      throw new HttpError(404, 'Employee not found.');
+    }
+
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { createEmployee, deleteEmployee, findAllForUser, mapEmployeeRow, updateEmployee };
