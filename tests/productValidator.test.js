@@ -2,9 +2,16 @@ const assert = require('node:assert');
 const test = require('node:test');
 
 const {
+  validateProductBarcode,
   validateProductId,
   validateUpdateProductPayload,
 } = require('../src/validators/productValidator');
+
+test('product barcode validation requires a non-blank barcode', () => {
+  assert.deepEqual(validateProductBarcode(''), ['Product barcode is required.']);
+  assert.deepEqual(validateProductBarcode('   '), ['Product barcode is required.']);
+  assert.deepEqual(validateProductBarcode('0123456789'), []);
+});
 
 test('product id validation requires a positive integer', () => {
   assert.deepEqual(validateProductId('0'), ['Product ID must be a positive integer.']);

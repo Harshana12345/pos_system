@@ -32,6 +32,14 @@ function validateProductId(id) {
   return [];
 }
 
+function validateProductBarcode(code) {
+  if (typeof code !== 'string' || isBlank(code)) {
+    return ['Product barcode is required.'];
+  }
+
+  return [];
+}
+
 function validateProductPayload(payload) {
   const errors = [];
 
@@ -246,6 +254,7 @@ function validateUpdateProductPayload(payload) {
 }
 
 module.exports = {
+  validateProductBarcode,
   validateProductId,
   validateProductPayload,
   validateUpdateProductPayload,

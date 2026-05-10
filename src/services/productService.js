@@ -193,6 +193,38 @@ async function findById(id) {
   return findProductDetailsById(database, id);
 }
 
+async function findByBarcode(code) {
+  const normalizedCode = String(code).trim();
+  const result = await database.query(
+    `WITH matched_products AS (
+       SELECT id,
+              0 AS match_priority
+       FROM products
+       WHERE barcode = $1
+         AND deleted_at IS NULL
+       UNION ALL
+       SELECT products.id,
+              1 AS match_priority
+       FROM product_variants
+       INNER JOIN products
+         ON products.id = product_variants.product_id
+       WHERE product_variants.barcode = $1
+         AND products.deleted_at IS NULL
+     )
+     SELECT id
+     FROM matched_products
+     ORDER BY match_priority ASC
+     LIMIT 1`,
+    [normalizedCode]
+  );
+
+  if (result.rowCount === 0) {
+    throw new HttpError(404, 'Product not found.');
+  }
+
+  return findProductDetailsById(database, result.rows[0].id);
+}
+
 async function replaceProductVariants(client, productId, variants) {
   await client.query('DELETE FROM product_variants WHERE product_id = $1', [Number(productId)]);
 
@@ -391,6 +423,7 @@ async function deleteProduct(id) {
 module.exports = {
   deleteProduct,
   findAll,
+  findByBarcode,
   findById,
   mapProductImageRow,
   mapProductRow,

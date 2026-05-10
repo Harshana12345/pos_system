@@ -1,6 +1,7 @@
 const productService = require('../services/productService');
 const HttpError = require('../utils/httpError');
 const {
+  validateProductBarcode,
   validateProductId,
   validateUpdateProductPayload,
 } = require('../validators/productValidator');
@@ -27,6 +28,25 @@ async function getProduct(req, res, next) {
 
   try {
     const product = await productService.findById(req.params.id);
+
+    res.status(200).json({
+      data: product,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getProductByBarcode(req, res, next) {
+  const errors = validateProductBarcode(req.params.code);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const product = await productService.findByBarcode(req.params.code);
 
     res.status(200).json({
       data: product,
@@ -90,4 +110,11 @@ function uploadProductImages(req, res) {
   });
 }
 
-module.exports = { deleteProduct, getProduct, listProducts, updateProduct, uploadProductImages };
+module.exports = {
+  deleteProduct,
+  getProduct,
+  getProductByBarcode,
+  listProducts,
+  updateProduct,
+  uploadProductImages,
+};
