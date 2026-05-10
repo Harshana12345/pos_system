@@ -45,6 +45,25 @@ async function listLowStockInventory(req, res, next) {
   }
 }
 
+async function listOutOfStockInventory(req, res, next) {
+  const errors = validateInventoryFilters(req.query);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const inventory = await inventoryService.findOutOfStock(req.query);
+
+    res.status(200).json({
+      data: inventory,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function listExpiringInventory(req, res, next) {
   const errors = validateExpiringInventoryFilters(req.query);
 
@@ -108,4 +127,5 @@ module.exports = {
   listInventory,
   listInventoryMovements,
   listLowStockInventory,
+  listOutOfStockInventory,
 };

@@ -92,6 +92,10 @@ async function findInventory(filters = {}, options = {}) {
     where.push('inventory.quantity < COALESCE(product_variants.reorder_level, products.reorder_level)');
   }
 
+  if (options.outOfStockOnly === true) {
+    where.push('inventory.quantity = 0');
+  }
+
   if (options.expiringOnly === true) {
     params.push(expiringFilters.thresholdDays);
     where.push('products.expiry_date IS NOT NULL');
@@ -143,6 +147,10 @@ async function findAll(filters = {}) {
 
 async function findLowStock(filters = {}) {
   return findInventory(filters, { lowStockOnly: true });
+}
+
+async function findOutOfStock(filters = {}) {
+  return findInventory(filters, { outOfStockOnly: true });
 }
 
 async function findExpiring(filters = {}) {
@@ -412,6 +420,7 @@ module.exports = {
   findAll,
   findExpiring,
   findLowStock,
+  findOutOfStock,
   findMovements,
   mapAdjustmentRow,
   mapInventoryRow,
