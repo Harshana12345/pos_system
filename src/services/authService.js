@@ -4,7 +4,7 @@ const database = require('../config/database');
 const { env } = require('../config/env');
 const User = require('../models/User');
 const HttpError = require('../utils/httpError');
-const { signJwt } = require('../utils/jwt');
+const { signJwt, verifyJwt } = require('../utils/jwt');
 const { hashPassword, verifyPassword } = require('../utils/passwordHash');
 
 function mapUserRow(row) {
@@ -34,6 +34,21 @@ async function storeRefreshToken({ userId, token, expiresIn }) {
   );
 
   return expiresAt;
+}
+
+function createAccessToken(user) {
+  return signJwt(
+    {
+      sub: String(user.id),
+      email: user.email,
+      roleId: user.roleId,
+      branchId: user.branchId,
+    },
+    {
+      secret: env.jwt.accessSecret,
+      expiresIn: env.jwt.accessExpiresIn,
+    }
+  );
 }
 
 async function registerUser({ name, email, password, roleId, branchId }) {
@@ -76,18 +91,7 @@ async function loginUser({ email, password }) {
   }
 
   const user = mapUserRow(row);
-  const { token, expiresIn } = signJwt(
-    {
-      sub: String(user.id),
-      email: user.email,
-      roleId: user.roleId,
-      branchId: user.branchId,
-    },
-    {
-      secret: env.jwt.accessSecret,
-      expiresIn: env.jwt.accessExpiresIn,
-    }
-  );
+  const { token, expiresIn } = createAccessToken(user);
   const { token: refreshToken, expiresIn: refreshExpiresIn } = signJwt(
     {
       sub: String(user.id),
@@ -116,4 +120,54 @@ async function loginUser({ email, password }) {
   };
 }
 
-module.exports = { loginUser, registerUser };
+async function refreshAccessToken(refreshToken) {
+  let payload;
+
+  try {
+    payload = verifyJwt(refreshToken, { secret: env.jwt.refreshSecret });
+  } catch {
+    throw new HttpError(401, 'Invalid refresh token.');
+  }
+
+  if (
+    payload.type !== 'refresh' ||
+    !Number.isInteger(Number(payload.sub)) ||
+    Number(payload.sub) <= 0
+  ) {
+    throw new HttpError(401, 'Invalid refresh token.');
+  }
+
+  const tokenHash = hashToken(refreshToken);
+  const result = await database.query(
+    `SELECT u.id, u.name, u.email, u.role_id, u.branch_id, u.status, u.created_at, u.updated_at
+     FROM refresh_tokens rt
+     INNER JOIN users u ON u.id = rt.user_id
+     WHERE rt.token_hash = $1
+       AND rt.user_id = $2
+       AND rt.revoked_at IS NULL
+       AND rt.expires_at > CURRENT_TIMESTAMP
+     LIMIT 1`,
+    [tokenHash, payload.sub]
+  );
+  const row = result.rows[0];
+
+  if (!row) {
+    throw new HttpError(401, 'Invalid refresh token.');
+  }
+
+  if (row.status !== 'active') {
+    throw new HttpError(403, 'User account is inactive.');
+  }
+
+  const user = mapUserRow(row);
+  const { token, expiresIn } = createAccessToken(user);
+
+  return {
+    accessToken: token,
+    tokenType: 'Bearer',
+    expiresIn,
+    user,
+  };
+}
+
+module.exports = { loginUser, refreshAccessToken, registerUser };

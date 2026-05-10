@@ -55,4 +55,19 @@ function validateLoginPayload(payload) {
   return errors;
 }
 
-module.exports = { MIN_PASSWORD_LENGTH, validateLoginPayload, validateRegisterPayload };
+function validateRefreshPayload(payload) {
+  const errors = [];
+
+  if (!hasValue(payload.refreshToken)) {
+    errors.push('Refresh token is required.');
+  }
+
+  return errors;
+}
+
+module.exports = {
+  MIN_PASSWORD_LENGTH,
+  validateLoginPayload,
+  validateRefreshPayload,
+  validateRegisterPayload,
+};

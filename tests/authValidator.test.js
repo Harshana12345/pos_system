@@ -1,7 +1,11 @@
 const assert = require('node:assert');
 const test = require('node:test');
 
-const { validateLoginPayload, validateRegisterPayload } = require('../src/validators/authValidator');
+const {
+  validateLoginPayload,
+  validateRefreshPayload,
+  validateRegisterPayload,
+} = require('../src/validators/authValidator');
 
 test('register payload validation requires expected fields', () => {
   const errors = validateRegisterPayload({});
@@ -37,6 +41,20 @@ test('login payload validation accepts a valid payload', () => {
   const errors = validateLoginPayload({
     email: 'admin@example.com',
     password: 'password123',
+  });
+
+  assert.deepEqual(errors, []);
+});
+
+test('refresh payload validation requires refresh token', () => {
+  const errors = validateRefreshPayload({});
+
+  assert.deepEqual(errors, ['Refresh token is required.']);
+});
+
+test('refresh payload validation accepts a refresh token', () => {
+  const errors = validateRefreshPayload({
+    refreshToken: 'refresh-token',
   });
 
   assert.deepEqual(errors, []);

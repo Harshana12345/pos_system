@@ -15,6 +15,22 @@ function base64UrlEncode(value) {
     .replace(/\//g, '_');
 }
 
+function base64UrlDecode(value) {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+
+  return Buffer.from(normalized, 'base64').toString('utf8');
+}
+
+function signInput(input, secret) {
+  return crypto
+    .createHmac('sha256', secret)
+    .update(input)
+    .digest('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
 function parseExpiresIn(expiresIn) {
   if (typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0) {
     return Math.floor(expiresIn);
@@ -48,13 +64,7 @@ function signJwt(payload, { secret, expiresIn }) {
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
   const encodedPayload = base64UrlEncode(JSON.stringify(tokenPayload));
   const signingInput = `${encodedHeader}.${encodedPayload}`;
-  const signature = crypto
-    .createHmac('sha256', secret)
-    .update(signingInput)
-    .digest('base64')
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
+  const signature = signInput(signingInput, secret);
 
   return {
     token: `${signingInput}.${signature}`,
@@ -62,4 +72,47 @@ function signJwt(payload, { secret, expiresIn }) {
   };
 }
 
-module.exports = { parseExpiresIn, signJwt };
+function verifyJwt(token, { secret, now = Math.floor(Date.now() / 1000) }) {
+  if (typeof secret !== 'string' || secret.length === 0) {
+    throw new Error('JWT secret is required.');
+  }
+
+  if (typeof token !== 'string') {
+    throw new Error('JWT token must be a string.');
+  }
+
+  const parts = token.split('.');
+
+  if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
+    throw new Error('JWT token is malformed.');
+  }
+
+  const [encodedHeader, encodedPayload, signature] = parts;
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const expectedSignature = signInput(signingInput, secret);
+  const signatureBuffer = Buffer.from(signature);
+  const expectedSignatureBuffer = Buffer.from(expectedSignature);
+
+  if (
+    signatureBuffer.length !== expectedSignatureBuffer.length ||
+    !crypto.timingSafeEqual(signatureBuffer, expectedSignatureBuffer)
+  ) {
+    throw new Error('JWT signature is invalid.');
+  }
+
+  const header = JSON.parse(base64UrlDecode(encodedHeader));
+
+  if (header.alg !== 'HS256' || header.typ !== 'JWT') {
+    throw new Error('JWT header is invalid.');
+  }
+
+  const payload = JSON.parse(base64UrlDecode(encodedPayload));
+
+  if (typeof payload.exp !== 'number' || payload.exp <= now) {
+    throw new Error('JWT token has expired.');
+  }
+
+  return payload;
+}
+
+module.exports = { parseExpiresIn, signJwt, verifyJwt };

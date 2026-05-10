@@ -176,3 +176,120 @@ test('loginUser rejects invalid credentials', {
     }
   );
 });
+
+test('refreshAccessToken validates stored refresh token and returns a new access token', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const crypto = require('crypto');
+  const database = require('../src/config/database');
+  const { env } = require('../src/config/env');
+  const authService = require('../src/services/authService');
+  const { signJwt } = require('../src/utils/jwt');
+  const originalQuery = database.query;
+  const { token: refreshToken } = signJwt(
+    {
+      sub: '1',
+      type: 'refresh',
+      jti: crypto.randomUUID(),
+    },
+    {
+      secret: env.jwt.refreshSecret,
+      expiresIn: env.jwt.refreshExpiresIn,
+    }
+  );
+  const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+  let selectParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (_sql, params) => {
+    selectParams = params;
+
+    return {
+      rows: [
+        {
+          id: '1',
+          name: 'Admin User',
+          email: 'admin@example.com',
+          role_id: '1',
+          branch_id: '2',
+          status: 'active',
+          created_at: new Date('2026-05-10T00:00:00.000Z'),
+          updated_at: new Date('2026-05-10T00:00:00.000Z'),
+        },
+      ],
+    };
+  };
+
+  const session = await authService.refreshAccessToken(refreshToken);
+  const payload = decodeJwtPayload(session.accessToken);
+
+  assert.equal(selectParams[0], refreshTokenHash);
+  assert.equal(selectParams[1], '1');
+  assert.equal(session.tokenType, 'Bearer');
+  assert.equal(session.expiresIn, 900);
+  assert.equal(session.user.password, undefined);
+  assert.equal(payload.sub, '1');
+  assert.equal(payload.email, 'admin@example.com');
+  assert.equal(payload.roleId, '1');
+  assert.equal(payload.branchId, '2');
+  assert.equal(payload.exp - payload.iat, 900);
+});
+
+test('refreshAccessToken rejects invalid refresh tokens', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const authService = require('../src/services/authService');
+  const originalQuery = database.query;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async () => {
+    throw new Error('Database should not be queried for an invalid JWT.');
+  };
+
+  await assert.rejects(() => authService.refreshAccessToken('not-a-token'), {
+    message: 'Invalid refresh token.',
+    statusCode: 401,
+  });
+});
+
+test('refreshAccessToken rejects refresh tokens missing from storage', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const crypto = require('crypto');
+  const database = require('../src/config/database');
+  const { env } = require('../src/config/env');
+  const authService = require('../src/services/authService');
+  const { signJwt } = require('../src/utils/jwt');
+  const originalQuery = database.query;
+  const { token: refreshToken } = signJwt(
+    {
+      sub: '1',
+      type: 'refresh',
+      jti: crypto.randomUUID(),
+    },
+    {
+      secret: env.jwt.refreshSecret,
+      expiresIn: env.jwt.refreshExpiresIn,
+    }
+  );
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async () => ({
+    rows: [],
+  });
+
+  await assert.rejects(() => authService.refreshAccessToken(refreshToken), {
+    message: 'Invalid refresh token.',
+    statusCode: 401,
+  });
+});

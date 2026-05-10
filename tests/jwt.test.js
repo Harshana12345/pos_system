@@ -2,7 +2,7 @@ const assert = require('node:assert');
 const crypto = require('node:crypto');
 const test = require('node:test');
 
-const { parseExpiresIn, signJwt } = require('../src/utils/jwt');
+const { parseExpiresIn, signJwt, verifyJwt } = require('../src/utils/jwt');
 
 function base64UrlDecode(value) {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
@@ -51,4 +51,27 @@ test('signJwt creates a verifiable HS256 token with expiration claims', () => {
   assert.equal(decodedPayload.email, 'admin@example.com');
   assert.equal(decodedPayload.exp - decodedPayload.iat, 900);
   assert.equal(signature, signInput(`${header}.${payload}`, 'test-secret'));
+});
+
+test('verifyJwt validates signature and expiration', () => {
+  const { token } = signJwt(
+    {
+      sub: '1',
+      type: 'refresh',
+    },
+    {
+      secret: 'test-secret',
+      expiresIn: '15m',
+    }
+  );
+  const payload = verifyJwt(token, { secret: 'test-secret' });
+
+  assert.equal(payload.sub, '1');
+  assert.equal(payload.type, 'refresh');
+  assert.throws(() => verifyJwt(token, { secret: 'wrong-secret' }), {
+    message: 'JWT signature is invalid.',
+  });
+  assert.throws(() => verifyJwt(token, { secret: 'test-secret', now: payload.exp }), {
+    message: 'JWT token has expired.',
+  });
 });
