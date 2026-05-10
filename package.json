@@ -1,0 +1,35 @@
+{
+  "name": "pos_system",
+  "version": "1.0.0",
+  "description": "POS system backend API built with Express.js.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Harshana12345/pos_system.git"
+  },
+  "keywords": [
+    "pos",
+    "express",
+    "api"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {},
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Harshana12345/pos_system/issues"
+  },
+  "homepage": "https://github.com/Harshana12345/pos_system#readme"
+}

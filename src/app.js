@@ -1,0 +1,36 @@
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+
+const { env } = require('./config/env');
+const routes = require('./routes');
+const { notFoundHandler } = require('./middleware/notFoundHandler');
+const { errorHandler } = require('./middleware/errorHandler');
+
+const app = express();
+
+app.use(helmet());
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+if (env.nodeEnv !== 'test') {
+  app.use(morgan('dev'));
+}
+
+app.use(env.apiPrefix, routes);
+
+app.get('/', (_req, res) => {
+  res.json({
+    name: 'POS System API',
+    status: 'ok',
+    apiPrefix: env.apiPrefix,
+  });
+});
+
+app.use(notFoundHandler);
+app.use(errorHandler);
+
+module.exports = app;
+
