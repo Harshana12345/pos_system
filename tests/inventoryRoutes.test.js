@@ -30,3 +30,14 @@ test('inventory routes register POST /adjust', {
 
   assert.equal(hasAdjustInventoryRoute, true);
 });
+
+test('inventory routes register GET /movements', {
+  skip: !dependenciesAvailable,
+}, () => {
+  const inventoryRoutes = require('../src/routes/inventoryRoutes');
+  const hasListInventoryMovementsRoute = inventoryRoutes.stack.some(
+    (layer) => layer.route?.path === '/movements' && layer.route.methods.get === true
+  );
+
+  assert.equal(hasListInventoryMovementsRoute, true);
+});

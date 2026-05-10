@@ -114,6 +114,79 @@ test('findAll filters inventory by branch id', {
   assert.deepEqual(selectParams, [7]);
 });
 
+test('findMovements lists stock movements with filters', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const inventoryService = require('../src/services/inventoryService');
+  const originalQuery = database.query;
+  let selectSql;
+  let selectParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params = []) => {
+    selectSql = sql;
+    selectParams = params;
+
+    return {
+      rowCount: 1,
+      rows: [
+        {
+          id: '99',
+          inventory_id: '1',
+          product_id: '10',
+          variant_id: '20',
+          branch_id: '3',
+          previous_quantity: 4,
+          new_quantity: 7,
+          quantity_change: 3,
+          reason: 'Cycle count correction',
+          adjusted_by_user_id: '42',
+          created_at: new Date('2026-05-02T00:00:00.000Z'),
+          product_name: 'Coffee',
+          product_sku: 'COFFEE',
+          product_barcode: null,
+          product_status: 'active',
+          variant_name: 'Large',
+          variant_sku: 'COFFEE-L',
+          variant_barcode: null,
+          variant_status: 'active',
+          branch_name: 'Downtown',
+          branch_status: 'active',
+          adjusted_by_user_name: 'Manager',
+          adjusted_by_user_email: 'manager@example.com',
+        },
+      ],
+    };
+  };
+
+  const movements = await inventoryService.findMovements({
+    inventoryId: '1',
+    branch_id: '3',
+    dateFrom: '2026-05-01',
+    date_to: '2026-05-03',
+    limit: '10',
+    offset: '5',
+  });
+
+  assert.match(selectSql, /FROM inventory_adjustments/);
+  assert.match(selectSql, /inventory_adjustments\.inventory_id = \$1/);
+  assert.match(selectSql, /inventory_adjustments\.branch_id = \$2/);
+  assert.match(selectSql, /inventory_adjustments\.created_at >= \$3/);
+  assert.match(selectSql, /inventory_adjustments\.created_at <= \$4/);
+  assert.match(selectSql, /ORDER BY inventory_adjustments\.created_at DESC/);
+  assert.match(selectSql, /LIMIT \$5 OFFSET \$6/);
+  assert.deepEqual(selectParams, [1, 3, '2026-05-01', '2026-05-03', 10, 5]);
+  assert.equal(movements[0].quantityChange, 3);
+  assert.equal(movements[0].product.sku, 'COFFEE');
+  assert.equal(movements[0].variant.sku, 'COFFEE-L');
+  assert.equal(movements[0].branch.name, 'Downtown');
+  assert.equal(movements[0].adjustedBy.email, 'manager@example.com');
+});
+
 test('adjustStock updates inventory quantity and logs reason', {
   skip: !dependenciesAvailable,
 }, async (t) => {

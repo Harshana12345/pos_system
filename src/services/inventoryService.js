@@ -45,6 +45,20 @@ function normalizeBranchId(filters = {}) {
   return branchId === undefined ? null : Number(branchId);
 }
 
+function normalizeMovementFilters(filters = {}) {
+  return {
+    inventoryId: filters.inventoryId ?? filters.inventory_id,
+    productId: filters.productId ?? filters.product_id,
+    variantId: filters.variantId ?? filters.variant_id,
+    branchId: filters.branchId ?? filters.branch_id,
+    adjustedByUserId: filters.adjustedByUserId ?? filters.adjusted_by_user_id,
+    createdFrom: filters.createdFrom ?? filters.created_from ?? filters.dateFrom ?? filters.date_from,
+    createdTo: filters.createdTo ?? filters.created_to ?? filters.dateTo ?? filters.date_to,
+    limit: filters.limit,
+    offset: filters.offset,
+  };
+}
+
 async function findAll(filters = {}) {
   const branchId = normalizeBranchId(filters);
   const params = [];
@@ -114,6 +128,121 @@ function mapAdjustmentRow(row) {
     adjustedByUserId: row.adjusted_by_user_id,
     createdAt: row.created_at,
   };
+}
+
+function mapMovementRow(row) {
+  return {
+    ...mapAdjustmentRow(row),
+    product: {
+      id: row.product_id,
+      name: row.product_name,
+      sku: row.product_sku,
+      barcode: row.product_barcode,
+      status: row.product_status,
+    },
+    variant: row.variant_id
+      ? {
+          id: row.variant_id,
+          name: row.variant_name,
+          sku: row.variant_sku,
+          barcode: row.variant_barcode,
+          status: row.variant_status,
+        }
+      : null,
+    branch: {
+      id: row.branch_id,
+      name: row.branch_name,
+      status: row.branch_status,
+    },
+    adjustedBy: row.adjusted_by_user_id
+      ? {
+          id: row.adjusted_by_user_id,
+          name: row.adjusted_by_user_name,
+          email: row.adjusted_by_user_email,
+        }
+      : null,
+  };
+}
+
+async function findMovements(filters = {}) {
+  const normalizedFilters = normalizeMovementFilters(filters);
+  const params = [];
+  const where = [];
+
+  [
+    ['inventoryId', 'inventory_adjustments.inventory_id'],
+    ['productId', 'inventory_adjustments.product_id'],
+    ['variantId', 'inventory_adjustments.variant_id'],
+    ['branchId', 'inventory_adjustments.branch_id'],
+    ['adjustedByUserId', 'inventory_adjustments.adjusted_by_user_id'],
+  ].forEach(([filterKey, columnName]) => {
+    if (normalizedFilters[filterKey] !== undefined) {
+      params.push(Number(normalizedFilters[filterKey]));
+      where.push(`${columnName} = $${params.length}`);
+    }
+  });
+
+  if (normalizedFilters.createdFrom !== undefined) {
+    params.push(normalizedFilters.createdFrom);
+    where.push(`inventory_adjustments.created_at >= $${params.length}`);
+  }
+
+  if (normalizedFilters.createdTo !== undefined) {
+    params.push(normalizedFilters.createdTo);
+    where.push(`inventory_adjustments.created_at <= $${params.length}`);
+  }
+
+  let paginationSql = '';
+
+  if (normalizedFilters.limit !== undefined) {
+    params.push(Number(normalizedFilters.limit));
+    paginationSql += ` LIMIT $${params.length}`;
+  }
+
+  if (normalizedFilters.offset !== undefined) {
+    params.push(Number(normalizedFilters.offset));
+    paginationSql += ` OFFSET $${params.length}`;
+  }
+
+  const result = await database.query(
+    `SELECT inventory_adjustments.id,
+            inventory_adjustments.inventory_id,
+            inventory_adjustments.product_id,
+            inventory_adjustments.variant_id,
+            inventory_adjustments.branch_id,
+            inventory_adjustments.previous_quantity,
+            inventory_adjustments.new_quantity,
+            inventory_adjustments.quantity_change,
+            inventory_adjustments.reason,
+            inventory_adjustments.adjusted_by_user_id,
+            inventory_adjustments.created_at,
+            products.name AS product_name,
+            products.sku AS product_sku,
+            products.barcode AS product_barcode,
+            products.status AS product_status,
+            product_variants.name AS variant_name,
+            product_variants.sku AS variant_sku,
+            product_variants.barcode AS variant_barcode,
+            product_variants.status AS variant_status,
+            branches.name AS branch_name,
+            branches.status AS branch_status,
+            users.name AS adjusted_by_user_name,
+            users.email AS adjusted_by_user_email
+     FROM inventory_adjustments
+     INNER JOIN products
+       ON products.id = inventory_adjustments.product_id
+     LEFT JOIN product_variants
+       ON product_variants.id = inventory_adjustments.variant_id
+     INNER JOIN branches
+       ON branches.id = inventory_adjustments.branch_id
+     LEFT JOIN users
+       ON users.id = inventory_adjustments.adjusted_by_user_id
+     ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY inventory_adjustments.created_at DESC, inventory_adjustments.id DESC${paginationSql}`,
+    params
+  );
+
+  return result.rows.map(mapMovementRow);
 }
 
 async function adjustStock(requester, payload) {
@@ -231,4 +360,11 @@ async function adjustStock(requester, payload) {
   }
 }
 
-module.exports = { adjustStock, findAll, mapAdjustmentRow, mapInventoryRow };
+module.exports = {
+  adjustStock,
+  findAll,
+  findMovements,
+  mapAdjustmentRow,
+  mapInventoryRow,
+  mapMovementRow,
+};

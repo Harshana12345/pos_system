@@ -3,6 +3,7 @@ const HttpError = require('../utils/httpError');
 const {
   validateInventoryAdjustmentPayload,
   validateInventoryFilters,
+  validateInventoryMovementFilters,
 } = require('../validators/inventoryValidator');
 
 async function listInventory(req, res, next) {
@@ -18,6 +19,25 @@ async function listInventory(req, res, next) {
 
     res.status(200).json({
       data: inventory,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function listInventoryMovements(req, res, next) {
+  const errors = validateInventoryMovementFilters(req.query);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const movements = await inventoryService.findMovements(req.query);
+
+    res.status(200).json({
+      data: movements,
     });
   } catch (error) {
     next(error);
@@ -43,4 +63,4 @@ async function adjustInventory(req, res, next) {
   }
 }
 
-module.exports = { adjustInventory, listInventory };
+module.exports = { adjustInventory, listInventory, listInventoryMovements };

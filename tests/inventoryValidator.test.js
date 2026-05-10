@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   validateInventoryAdjustmentPayload,
   validateInventoryFilters,
+  validateInventoryMovementFilters,
 } = require('../src/validators/inventoryValidator');
 
 test('inventory filter validation accepts missing or valid branch id', () => {
@@ -62,5 +63,42 @@ test('inventory adjustment validation rejects invalid payloads', () => {
       reason: 'Bad quantity',
     }),
     ['Quantity must be a non-negative integer.']
+  );
+});
+
+test('inventory movement filter validation accepts supported filters', () => {
+  assert.deepEqual(
+    validateInventoryMovementFilters({
+      inventoryId: '1',
+      product_id: '2',
+      variantId: '3',
+      branch_id: '4',
+      adjustedByUserId: '5',
+      dateFrom: '2026-05-01',
+      date_to: '2026-05-10T12:00:00.000Z',
+      limit: '25',
+      offset: '0',
+    }),
+    []
+  );
+});
+
+test('inventory movement filter validation rejects invalid filters', () => {
+  assert.deepEqual(
+    validateInventoryMovementFilters({
+      inventoryId: '0',
+      branchId: 'abc',
+      createdFrom: '2026-05-10',
+      createdTo: '2026-05-01',
+      limit: '0',
+      offset: '-1',
+    }),
+    [
+      'Inventory ID must be a positive integer.',
+      'Branch ID must be a positive integer.',
+      'Created from must be before or equal to created to.',
+      'Limit must be a positive integer.',
+      'Offset must be a non-negative integer.',
+    ]
   );
 });
