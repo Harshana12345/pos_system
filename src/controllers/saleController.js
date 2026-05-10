@@ -2,6 +2,12 @@ const saleService = require('../services/saleService');
 const HttpError = require('../utils/httpError');
 const { validateSaleFilters, validateSalePayload } = require('../validators/saleValidator');
 
+function isPositiveInteger(value) {
+  const normalized = Number(value);
+
+  return Number.isInteger(normalized) && normalized > 0;
+}
+
 async function listSales(req, res, next) {
   const errors = validateSaleFilters(req.query);
 
@@ -15,6 +21,23 @@ async function listSales(req, res, next) {
 
     res.status(200).json({
       data: sales,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getSale(req, res, next) {
+  if (!isPositiveInteger(req.params.id)) {
+    next(new HttpError(400, 'Sale ID must be a positive integer.'));
+    return;
+  }
+
+  try {
+    const sale = await saleService.findById(Number(req.params.id));
+
+    res.status(200).json({
+      data: sale,
     });
   } catch (error) {
     next(error);
@@ -42,5 +65,6 @@ async function createSale(req, res, next) {
 
 module.exports = {
   createSale,
+  getSale,
   listSales,
 };

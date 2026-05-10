@@ -495,9 +495,70 @@ async function findAll(filters = {}) {
   return result.rows.map((row) => mapSaleRow(row));
 }
 
+async function findById(saleId) {
+  const saleResult = await database.query(
+    `SELECT id,
+            customer_id,
+            branch_id,
+            status,
+            subtotal,
+            discount_amount,
+            tax_amount,
+            total_amount,
+            paid_amount,
+            balance_amount,
+            payment_status,
+            created_by,
+            created_at
+     FROM sales
+     WHERE id = $1`,
+    [saleId]
+  );
+
+  if (saleResult.rowCount === 0) {
+    throw new HttpError(404, 'Sale not found.');
+  }
+
+  const itemResult = await database.query(
+    `SELECT id,
+            sale_id,
+            product_id,
+            variant_id,
+            quantity,
+            unit_price,
+            discount_amount,
+            line_total
+     FROM sale_items
+     WHERE sale_id = $1
+     ORDER BY id ASC`,
+    [saleId]
+  );
+  const paymentResult = await database.query(
+    `SELECT id,
+            sale_id,
+            amount,
+            method,
+            reference_number,
+            notes,
+            paid_at,
+            created_by,
+            created_at
+     FROM sale_payments
+     WHERE sale_id = $1
+     ORDER BY paid_at ASC, id ASC`,
+    [saleId]
+  );
+
+  return {
+    ...mapSaleRow(saleResult.rows[0], itemResult.rows.map(mapSaleItemRow)),
+    payments: paymentResult.rows.map(mapPaymentRow),
+  };
+}
+
 module.exports = {
   createCompletedSale,
   findAll,
+  findById,
   mapPaymentRow,
   mapSaleItemRow,
   mapSaleRow,

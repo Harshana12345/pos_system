@@ -74,6 +74,140 @@ test('findAll filters sales by date range, cashier, branch, and status', {
   assert.equal(sales[0].createdBy, '42');
 });
 
+test('findById returns sale details with items and payments', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const saleService = require('../src/services/saleService');
+  const originalQuery = database.query;
+  const queries = [];
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params = []) => {
+    queries.push({ sql, params });
+
+    if (/FROM sales/.test(sql)) {
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: '70',
+            customer_id: '1',
+            branch_id: '2',
+            status: 'completed',
+            subtotal: '19.00',
+            discount_amount: '1.00',
+            tax_amount: '0.50',
+            total_amount: '18.50',
+            paid_amount: '18.50',
+            balance_amount: '0.00',
+            payment_status: 'paid',
+            created_by: '42',
+            created_at: new Date('2026-05-10T00:00:00.000Z'),
+          },
+        ],
+      };
+    }
+
+    if (/FROM sale_items/.test(sql)) {
+      return {
+        rowCount: 2,
+        rows: [
+          {
+            id: '90',
+            sale_id: '70',
+            product_id: '10',
+            variant_id: '5',
+            quantity: '2',
+            unit_price: '9.50',
+            discount_amount: '0.00',
+            line_total: '19.00',
+          },
+          {
+            id: '91',
+            sale_id: '70',
+            product_id: '11',
+            variant_id: null,
+            quantity: '1',
+            unit_price: '3.00',
+            discount_amount: '0.50',
+            line_total: '2.50',
+          },
+        ],
+      };
+    }
+
+    if (/FROM sale_payments/.test(sql)) {
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: '71',
+            sale_id: '70',
+            amount: '18.50',
+            method: 'cash',
+            reference_number: 'RCPT-70',
+            notes: 'Paid in full',
+            paid_at: new Date('2026-05-10T00:00:30.000Z'),
+            created_by: '42',
+            created_at: new Date('2026-05-10T00:00:30.000Z'),
+          },
+        ],
+      };
+    }
+
+    return { rowCount: 0, rows: [] };
+  };
+
+  const sale = await saleService.findById(70);
+
+  assert.match(queries[0].sql, /FROM sales/);
+  assert.match(queries[0].sql, /WHERE id = \$1/);
+  assert.match(queries[1].sql, /FROM sale_items/);
+  assert.match(queries[1].sql, /ORDER BY id ASC/);
+  assert.match(queries[2].sql, /FROM sale_payments/);
+  assert.match(queries[2].sql, /ORDER BY paid_at ASC, id ASC/);
+  assert.deepEqual(queries.map(({ params }) => params), [[70], [70], [70]]);
+  assert.equal(sale.id, '70');
+  assert.equal(sale.totalAmount, 18.5);
+  assert.equal(sale.items.length, 2);
+  assert.equal(sale.items[0].lineTotal, 19);
+  assert.equal(sale.payments.length, 1);
+  assert.equal(sale.payments[0].amount, 18.5);
+  assert.equal(sale.payments[0].method, 'cash');
+});
+
+test('findById rejects missing sales', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const saleService = require('../src/services/saleService');
+  const originalQuery = database.query;
+  const queries = [];
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params = []) => {
+    queries.push({ sql, params });
+
+    return { rowCount: 0, rows: [] };
+  };
+
+  await assert.rejects(() => saleService.findById(999), {
+    statusCode: 404,
+    message: 'Sale not found.',
+  });
+
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /FROM sales/);
+  assert.deepEqual(queries[0].params, [999]);
+});
+
 test('createCompletedSale creates sale, deducts inventory, and records payment', {
   skip: !dependenciesAvailable,
 }, async (t) => {
