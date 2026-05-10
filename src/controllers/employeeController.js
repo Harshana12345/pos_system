@@ -1,4 +1,25 @@
 const employeeService = require('../services/employeeService');
+const HttpError = require('../utils/httpError');
+const { validateCreateEmployeePayload } = require('../validators/employeeValidator');
+
+async function createEmployee(req, res, next) {
+  const errors = validateCreateEmployeePayload(req.body);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const employee = await employeeService.createEmployee(req.user, req.body);
+
+    res.status(201).json({
+      data: employee,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
 
 async function listEmployees(req, res, next) {
   try {
@@ -12,4 +33,4 @@ async function listEmployees(req, res, next) {
   }
 }
 
-module.exports = { listEmployees };
+module.exports = { createEmployee, listEmployees };
