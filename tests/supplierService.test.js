@@ -181,3 +181,115 @@ test('deleteSupplier deletes by id and rejects missing suppliers', {
   assert.match(queries[0].sql, /DELETE FROM suppliers/);
   assert.deepEqual(queries[0].params, [1]);
 });
+
+test('findPurchaseHistoryById returns supplier purchases with items', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const supplierService = require('../src/services/supplierService');
+  const originalQuery = database.query;
+  const queries = [];
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    queries.push({ sql, params });
+
+    if (/FROM suppliers/.test(sql)) {
+      return {
+        rowCount: 1,
+        rows: [{ id: '1' }],
+      };
+    }
+
+    return {
+      rowCount: 3,
+      rows: [
+        {
+          id: '10',
+          supplier_id: '1',
+          branch_id: '2',
+          status: 'received',
+          total_amount: '35.50',
+          notes: 'Weekly order',
+          created_by: '7',
+          created_at: new Date('2026-05-01T00:00:00.000Z'),
+          item_id: '100',
+          purchase_order_id: '10',
+          product_id: '20',
+          quantity: '2',
+          cost_price: '10.25',
+        },
+        {
+          id: '10',
+          supplier_id: '1',
+          branch_id: '2',
+          status: 'received',
+          total_amount: '35.50',
+          notes: 'Weekly order',
+          created_by: '7',
+          created_at: new Date('2026-05-01T00:00:00.000Z'),
+          item_id: '101',
+          purchase_order_id: '10',
+          product_id: '21',
+          quantity: '3',
+          cost_price: '5.00',
+        },
+        {
+          id: '9',
+          supplier_id: '1',
+          branch_id: '2',
+          status: 'draft',
+          total_amount: '0.00',
+          notes: null,
+          created_by: '7',
+          created_at: new Date('2026-04-30T00:00:00.000Z'),
+          item_id: null,
+          purchase_order_id: null,
+          product_id: null,
+          quantity: null,
+          cost_price: null,
+        },
+      ],
+    };
+  };
+
+  const purchases = await supplierService.findPurchaseHistoryById('1');
+
+  assert.match(queries[0].sql, /FROM suppliers/);
+  assert.match(queries[1].sql, /FROM purchase_orders po/);
+  assert.match(queries[1].sql, /LEFT JOIN purchase_order_items poi/);
+  assert.deepEqual(queries[0].params, [1]);
+  assert.deepEqual(queries[1].params, [1]);
+  assert.equal(purchases.length, 2);
+  assert.equal(purchases[0].id, '10');
+  assert.equal(purchases[0].totalAmount, 35.5);
+  assert.equal(purchases[0].items.length, 2);
+  assert.equal(purchases[0].items[0].lineTotal, 20.5);
+  assert.equal(purchases[1].id, '9');
+  assert.deepEqual(purchases[1].items, []);
+});
+
+test('findPurchaseHistoryById rejects missing suppliers', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const supplierService = require('../src/services/supplierService');
+  const originalQuery = database.query;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async () => ({
+    rowCount: 0,
+    rows: [],
+  });
+
+  await assert.rejects(() => supplierService.findPurchaseHistoryById('99'), {
+    message: 'Supplier not found.',
+    statusCode: 404,
+  });
+});

@@ -26,9 +26,15 @@ test('supplier routes register CRUD endpoints', {
   const hasDeleteRoute = supplierRoutes.stack.some(
     (layer) => layer.route?.path === '/:id' && layer.route.methods.delete === true
   );
+  const hasPurchaseHistoryRoute = supplierRoutes.stack.some(
+    (layer) =>
+      layer.route?.path === '/:id/purchase-history' &&
+      layer.route.methods.get === true
+  );
 
   assert.equal(hasListRoute, true);
   assert.equal(hasCreateRoute, true);
   assert.equal(hasUpdateRoute, true);
   assert.equal(hasDeleteRoute, true);
+  assert.equal(hasPurchaseHistoryRoute, true);
 });
