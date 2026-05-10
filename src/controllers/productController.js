@@ -1,9 +1,42 @@
 const productService = require('../services/productService');
+const HttpError = require('../utils/httpError');
+const {
+  validateProductId,
+  validateUpdateProductPayload,
+} = require('../validators/productValidator');
 
-function listProducts(_req, res) {
-  res.json({
-    data: productService.findAll(),
-  });
+async function listProducts(_req, res, next) {
+  try {
+    const products = await productService.findAll();
+
+    res.json({
+      data: products,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function updateProduct(req, res, next) {
+  const errors = [
+    ...validateProductId(req.params.id),
+    ...validateUpdateProductPayload(req.body),
+  ];
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const product = await productService.updateProduct(req.params.id, req.body);
+
+    res.status(200).json({
+      data: product,
+    });
+  } catch (error) {
+    next(error);
+  }
 }
 
 function uploadProductImages(req, res) {
@@ -21,4 +54,4 @@ function uploadProductImages(req, res) {
   });
 }
 
-module.exports = { listProducts, uploadProductImages };
+module.exports = { listProducts, updateProduct, uploadProductImages };
