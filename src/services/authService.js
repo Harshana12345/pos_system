@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 const database = require('../config/database');
 const { env } = require('../config/env');
 const User = require('../models/User');
@@ -16,6 +18,22 @@ function mapUserRow(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
+}
+
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+async function storeRefreshToken({ userId, token, expiresIn }) {
+  const expiresAt = new Date(Date.now() + expiresIn * 1000);
+
+  await database.query(
+    `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+     VALUES ($1, $2, $3)`,
+    [userId, hashToken(token), expiresAt]
+  );
+
+  return expiresAt;
 }
 
 async function registerUser({ name, email, password, roleId, branchId }) {
@@ -70,11 +88,30 @@ async function loginUser({ email, password }) {
       expiresIn: env.jwt.accessExpiresIn,
     }
   );
+  const { token: refreshToken, expiresIn: refreshExpiresIn } = signJwt(
+    {
+      sub: String(user.id),
+      type: 'refresh',
+      jti: crypto.randomUUID(),
+    },
+    {
+      secret: env.jwt.refreshSecret,
+      expiresIn: env.jwt.refreshExpiresIn,
+    }
+  );
+  const refreshTokenExpiresAt = await storeRefreshToken({
+    userId: user.id,
+    token: refreshToken,
+    expiresIn: refreshExpiresIn,
+  });
 
   return {
     accessToken: token,
+    refreshToken,
     tokenType: 'Bearer',
     expiresIn,
+    refreshExpiresIn,
+    refreshTokenExpiresAt,
     user,
   };
 }

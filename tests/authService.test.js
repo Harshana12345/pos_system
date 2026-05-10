@@ -69,18 +69,26 @@ test('registerUser hashes password and returns user without password', {
 test('loginUser validates credentials and returns a signed access token', {
   skip: !dependenciesAvailable,
 }, async (t) => {
+  const crypto = require('crypto');
   const database = require('../src/config/database');
   const authService = require('../src/services/authService');
   const { hashPassword } = require('../src/utils/passwordHash');
   const originalQuery = database.query;
-  let queryParams;
+  let selectParams;
+  let refreshInsertParams;
 
   t.after(() => {
     database.query = originalQuery;
   });
 
-  database.query = async (_sql, params) => {
-    queryParams = params;
+  database.query = async (sql, params) => {
+    if (sql.includes('INSERT INTO refresh_tokens')) {
+      refreshInsertParams = params;
+
+      return { rows: [] };
+    }
+
+    selectParams = params;
 
     return {
       rows: [
@@ -104,10 +112,14 @@ test('loginUser validates credentials and returns a signed access token', {
     password: 'password123',
   });
   const payload = decodeJwtPayload(session.accessToken);
+  const refreshPayload = decodeJwtPayload(session.refreshToken);
+  const refreshTokenHash = crypto.createHash('sha256').update(session.refreshToken).digest('hex');
 
-  assert.equal(queryParams[0], 'admin@example.com');
+  assert.equal(selectParams[0], 'admin@example.com');
   assert.equal(session.tokenType, 'Bearer');
   assert.equal(session.expiresIn, 900);
+  assert.equal(session.refreshExpiresIn, 604800);
+  assert.equal(session.refreshTokenExpiresAt instanceof Date, true);
   assert.equal(session.user.password, undefined);
   assert.equal(payload.sub, '1');
   assert.equal(payload.email, 'admin@example.com');
@@ -115,6 +127,13 @@ test('loginUser validates credentials and returns a signed access token', {
   assert.equal(payload.branchId, '2');
   assert.equal(typeof payload.iat, 'number');
   assert.equal(payload.exp - payload.iat, 900);
+  assert.equal(refreshPayload.sub, '1');
+  assert.equal(refreshPayload.type, 'refresh');
+  assert.equal(typeof refreshPayload.jti, 'string');
+  assert.equal(refreshPayload.exp - refreshPayload.iat, 604800);
+  assert.equal(refreshInsertParams[0], '1');
+  assert.equal(refreshInsertParams[1], refreshTokenHash);
+  assert.equal(refreshInsertParams[2] instanceof Date, true);
 });
 
 test('loginUser rejects invalid credentials', {
