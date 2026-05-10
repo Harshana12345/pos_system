@@ -31,6 +31,24 @@ function normalizePaymentDate(value) {
   return new Date(value);
 }
 
+function normalizePaymentPayload(payment) {
+  const amount = roundCurrency(Number(payment.amount));
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new HttpError(400, 'Payment amount must be a positive number.');
+  }
+
+  return {
+    amount,
+    method: normalizeNullableString(payment.method),
+    referenceNumber: normalizeNullableString(
+      payment.referenceNumber ?? payment.reference_number
+    ),
+    notes: normalizeNullableString(payment.notes),
+    paidAt: normalizePaymentDate(payment.paidAt ?? payment.paid_at),
+  };
+}
+
 function normalizeSaleFilters(filters = {}) {
   return {
     branchId: filters.branchId ?? filters.branch_id,
@@ -60,8 +78,32 @@ function normalizeSaleFilters(filters = {}) {
 
 function normalizeSalePayload(payload) {
   const draft = normalizeSaleDraftPayload(payload);
+  let payments;
+
+  if (payload.payments !== undefined) {
+    if (!Array.isArray(payload.payments) || payload.payments.length === 0) {
+      throw new HttpError(400, 'At least one sale payment is required.');
+    }
+
+    payments = payload.payments.map(normalizePaymentPayload);
+  } else {
+    payments = [
+      normalizePaymentPayload({
+        amount: payload.paidAmount ?? payload.paid_amount ?? payload.payment?.amount,
+        method: payload.paymentMethod ?? payload.payment_method ?? payload.payment?.method,
+        referenceNumber:
+          payload.paymentReferenceNumber ??
+          payload.payment_reference_number ??
+          payload.payment?.referenceNumber ??
+          payload.payment?.reference_number,
+        notes: payload.paymentNotes ?? payload.payment_notes ?? payload.payment?.notes,
+        paidAt: payload.paidAt ?? payload.paid_at ?? payload.payment?.paidAt,
+      }),
+    ];
+  }
+
   const paidAmount = roundCurrency(
-    Number(payload.paidAmount ?? payload.paid_amount ?? payload.payment?.amount)
+    payments.reduce((sum, payment) => sum + payment.amount, 0)
   );
 
   if (!Number.isFinite(paidAmount) || paidAmount <= 0) {
@@ -76,24 +118,7 @@ function normalizeSalePayload(payload) {
     ...draft,
     paidAmount,
     balanceAmount: roundCurrency(Math.max(draft.totalAmount - paidAmount, 0)),
-    payment: {
-      amount: paidAmount,
-      method: normalizeNullableString(
-        payload.paymentMethod ?? payload.payment_method ?? payload.payment?.method
-      ),
-      referenceNumber: normalizeNullableString(
-        payload.paymentReferenceNumber ??
-          payload.payment_reference_number ??
-          payload.payment?.referenceNumber ??
-          payload.payment?.reference_number
-      ),
-      notes: normalizeNullableString(
-        payload.paymentNotes ?? payload.payment_notes ?? payload.payment?.notes
-      ),
-      paidAt: normalizePaymentDate(
-        payload.paidAt ?? payload.paid_at ?? payload.payment?.paidAt
-      ),
-    },
+    payments,
   };
 }
 
@@ -479,6 +504,22 @@ async function createCompletedSale(requester, payload) {
       ]
     );
     const saleId = saleResult.rows[0].id;
+    const paymentValues = [];
+    const paymentPlaceholders = normalized.payments.map((payment, index) => {
+      const offset = index * 7;
+
+      paymentValues.push(
+        saleId,
+        payment.amount,
+        payment.method,
+        payment.referenceNumber,
+        payment.notes,
+        payment.paidAt,
+        requester?.id ?? null
+      );
+
+      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`;
+    });
     const paymentResult = await client.query(
       `INSERT INTO sale_payments (
          sale_id,
@@ -489,7 +530,7 @@ async function createCompletedSale(requester, payload) {
          paid_at,
          created_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       VALUES ${paymentPlaceholders.join(', ')}
        RETURNING id,
                  sale_id,
                  amount,
@@ -499,15 +540,7 @@ async function createCompletedSale(requester, payload) {
                  paid_at,
                  created_by,
                  created_at`,
-      [
-        saleId,
-        normalized.payment.amount,
-        normalized.payment.method,
-        normalized.payment.referenceNumber,
-        normalized.payment.notes,
-        normalized.payment.paidAt,
-        requester?.id ?? null,
-      ]
+      paymentValues
     );
     const itemValues = [];
     const itemPlaceholders = normalized.items.map((item, index) => {
@@ -559,6 +592,7 @@ async function createCompletedSale(requester, payload) {
     return {
       ...mapSaleRow(saleResult.rows[0], itemResult.rows.map(mapSaleItemRow)),
       payment: mapPaymentRow(paymentResult.rows[0]),
+      payments: paymentResult.rows.map(mapPaymentRow),
       inventoryAdjustments,
     };
   } catch (error) {

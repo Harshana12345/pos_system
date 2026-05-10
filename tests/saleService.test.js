@@ -394,6 +394,174 @@ test('createCompletedSale creates sale, deducts inventory, and records payment',
   assert.equal(sale.inventoryAdjustments[0].quantityChange, -2);
 });
 
+test('createCompletedSale records multiple split payments for one sale', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const saleService = require('../src/services/saleService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/INSERT INTO sales/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '70',
+              customer_id: params[0],
+              branch_id: params[1],
+              status: 'completed',
+              subtotal: params[2],
+              discount_amount: params[3],
+              tax_amount: params[4],
+              total_amount: params[5],
+              paid_amount: params[6],
+              balance_amount: params[7],
+              payment_status: 'paid',
+              created_by: params[8],
+              created_at: new Date('2026-05-10T00:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/INSERT INTO sale_payments/.test(sql)) {
+        return {
+          rowCount: 2,
+          rows: [
+            {
+              id: '71',
+              sale_id: params[0],
+              amount: params[1],
+              method: params[2],
+              reference_number: params[3],
+              notes: params[4],
+              paid_at: params[5],
+              created_by: params[6],
+              created_at: new Date('2026-05-10T00:00:30.000Z'),
+            },
+            {
+              id: '72',
+              sale_id: params[7],
+              amount: params[8],
+              method: params[9],
+              reference_number: params[10],
+              notes: params[11],
+              paid_at: params[12],
+              created_by: params[13],
+              created_at: new Date('2026-05-10T00:00:40.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/INSERT INTO sale_items/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '90',
+              sale_id: params[0],
+              product_id: params[1],
+              variant_id: params[2],
+              quantity: params[3],
+              unit_price: params[4],
+              discount_amount: params[5],
+              line_total: params[6],
+            },
+          ],
+        };
+      }
+
+      if (/FROM inventory/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '30',
+              product_id: params[0],
+              variant_id: null,
+              branch_id: params[1],
+              quantity: 8,
+            },
+          ],
+        };
+      }
+
+      if (/UPDATE inventory/.test(sql)) {
+        return { rowCount: 1, rows: [] };
+      }
+
+      if (/INSERT INTO inventory_adjustments/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '99',
+              inventory_id: params[0],
+              product_id: params[1],
+              variant_id: params[2],
+              branch_id: params[3],
+              previous_quantity: params[4],
+              new_quantity: params[5],
+              quantity_change: params[6],
+              reason: params[7],
+              adjusted_by_user_id: params[8],
+              created_at: new Date('2026-05-10T00:01:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  const sale = await saleService.createCompletedSale(
+    { id: 42 },
+    {
+      branchId: '2',
+      payments: [
+        { amount: '10.00', method: 'cash', notes: 'Cash drawer' },
+        { amount: '8.50', method: 'card', referenceNumber: 'CARD-70' },
+      ],
+      items: [{ productId: '10', quantity: '2', unitPrice: '9.25' }],
+    }
+  );
+
+  assert.deepEqual(queries[1].params, [null, 2, 18.5, 0, 0, 18.5, 18.5, 0, 42]);
+  assert.match(queries[2].sql, /INSERT INTO sale_payments/);
+  assert.deepEqual(queries[2].params.slice(0, 5), [
+    '70',
+    10,
+    'cash',
+    null,
+    'Cash drawer',
+  ]);
+  assert.deepEqual(queries[2].params.slice(7, 12), [
+    '70',
+    8.5,
+    'card',
+    'CARD-70',
+    null,
+  ]);
+  assert.equal(sale.paidAmount, 18.5);
+  assert.equal(sale.payment.amount, 10);
+  assert.equal(sale.payments.length, 2);
+  assert.equal(sale.payments[0].method, 'cash');
+  assert.equal(sale.payments[1].method, 'card');
+});
+
 test('createCompletedSale rejects insufficient stock and rolls back', {
   skip: !dependenciesAvailable,
 }, async (t) => {

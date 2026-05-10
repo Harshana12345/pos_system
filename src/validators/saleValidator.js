@@ -32,6 +32,36 @@ function isOptionalString(value) {
   return value === undefined || value === null || typeof value === 'string';
 }
 
+function validatePayment(payment, label, errors) {
+  if (!isPlainObject(payment)) {
+    errors.push(`${label} details are required.`);
+    return;
+  }
+
+  const referenceNumber = payment.referenceNumber ?? payment.reference_number;
+  const paidAt = payment.paidAt ?? payment.paid_at;
+
+  if (!isPositiveNumber(payment.amount)) {
+    errors.push(`${label} amount must be a positive number.`);
+  }
+
+  if (!isOptionalString(payment.method)) {
+    errors.push(`${label} method must be a string.`);
+  }
+
+  if (!isOptionalString(referenceNumber)) {
+    errors.push(`${label} reference number must be a string.`);
+  }
+
+  if (!isOptionalString(payment.notes)) {
+    errors.push(`${label} notes must be a string.`);
+  }
+
+  if (paidAt !== undefined && !isValidDate(paidAt)) {
+    errors.push(`${label} date must be a valid date.`);
+  }
+}
+
 function validateSaleFilters(filters = {}) {
   const errors = [];
   const branchId = filters.branchId ?? filters.branch_id;
@@ -101,6 +131,7 @@ function validateSalePayload(payload) {
   const branchId = payload.branchId ?? payload.branch_id;
   const paidAmount =
     payload.paidAmount ?? payload.paid_amount ?? payload.payment?.amount;
+  const hasSplitPayments = payload.payments !== undefined;
 
   if (customerId !== undefined && customerId !== null && customerId !== '') {
     if (!isPositiveInteger(customerId)) {
@@ -120,31 +151,50 @@ function validateSalePayload(payload) {
     errors.push('Sale tax amount must be a non-negative number.');
   }
 
-  if (!isPositiveNumber(paidAmount)) {
+  if (!hasSplitPayments && !isPositiveNumber(paidAmount)) {
     errors.push('Paid amount must be a positive number.');
   }
 
-  if (
-    !isOptionalString(payload.paymentMethod ?? payload.payment_method ?? payload.payment?.method)
-  ) {
-    errors.push('Payment method must be a string.');
-  }
+  if (hasSplitPayments) {
+    if (!Array.isArray(payload.payments) || payload.payments.length === 0) {
+      errors.push('At least one sale payment is required.');
+    } else {
+      payload.payments.forEach((payment, index) => {
+        validatePayment(payment, `Payment ${index + 1}`, errors);
+      });
+    }
+  } else {
+    if (
+      !isOptionalString(payload.paymentMethod ?? payload.payment_method ?? payload.payment?.method)
+    ) {
+      errors.push('Payment method must be a string.');
+    }
 
-  if (
-    !isOptionalString(
-      payload.paymentReferenceNumber ??
-        payload.payment_reference_number ??
-        payload.payment?.referenceNumber ??
-        payload.payment?.reference_number
-    )
-  ) {
-    errors.push('Payment reference number must be a string.');
-  }
+    if (
+      !isOptionalString(
+        payload.paymentReferenceNumber ??
+          payload.payment_reference_number ??
+          payload.payment?.referenceNumber ??
+          payload.payment?.reference_number
+      )
+    ) {
+      errors.push('Payment reference number must be a string.');
+    }
 
-  if (
-    !isOptionalString(payload.paymentNotes ?? payload.payment_notes ?? payload.payment?.notes)
-  ) {
-    errors.push('Payment notes must be a string.');
+    if (
+      !isOptionalString(payload.paymentNotes ?? payload.payment_notes ?? payload.payment?.notes)
+    ) {
+      errors.push('Payment notes must be a string.');
+    }
+
+    if (
+      (payload.paidAt !== undefined && !isValidDate(payload.paidAt)) ||
+      (payload.paid_at !== undefined && !isValidDate(payload.paid_at)) ||
+      (payload.payment?.paidAt !== undefined && !isValidDate(payload.payment.paidAt)) ||
+      (payload.payment?.paid_at !== undefined && !isValidDate(payload.payment.paid_at))
+    ) {
+      errors.push('Payment date must be a valid date.');
+    }
   }
 
   if (!Array.isArray(payload.items) || payload.items.length === 0) {

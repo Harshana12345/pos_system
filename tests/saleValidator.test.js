@@ -64,6 +64,36 @@ test('validateSalePayload accepts a completed sale payload', () => {
   assert.deepEqual(errors, []);
 });
 
+test('validateSalePayload accepts split sale payments', () => {
+  const errors = validateSalePayload({
+    branchId: '2',
+    discountAmount: '1.00',
+    taxAmount: '0.50',
+    payments: [
+      {
+        amount: '10.00',
+        method: 'cash',
+        notes: 'Cash tendered',
+      },
+      {
+        amount: '8.50',
+        method: 'card',
+        reference_number: 'CARD-1',
+        paid_at: '2026-05-10T00:00:00.000Z',
+      },
+    ],
+    items: [
+      {
+        productId: '10',
+        quantity: '2',
+        unitPrice: '9.50',
+      },
+    ],
+  });
+
+  assert.deepEqual(errors, []);
+});
+
 test('validateSalePayload rejects missing sale fields', () => {
   const errors = validateSalePayload({
     customerId: 'abc',
@@ -87,6 +117,32 @@ test('validateSalePayload rejects missing sale fields', () => {
     'Payment reference number must be a string.',
     'Payment notes must be a string.',
     'At least one sale item is required.',
+  ]);
+});
+
+test('validateSalePayload rejects invalid split payments', () => {
+  const errors = validateSalePayload({
+    branchId: '2',
+    payments: [
+      {
+        amount: '0',
+        method: 42,
+        referenceNumber: false,
+        notes: [],
+        paidAt: 'not-a-date',
+      },
+      null,
+    ],
+    items: [{ productId: '10', quantity: '1', unitPrice: '5.00' }],
+  });
+
+  assert.deepEqual(errors, [
+    'Payment 1 amount must be a positive number.',
+    'Payment 1 method must be a string.',
+    'Payment 1 reference number must be a string.',
+    'Payment 1 notes must be a string.',
+    'Payment 1 date must be a valid date.',
+    'Payment 2 details are required.',
   ]);
 });
 
