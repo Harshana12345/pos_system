@@ -1,0 +1,115 @@
+const assert = require('node:assert');
+const test = require('node:test');
+
+let dependenciesAvailable = true;
+
+try {
+  require.resolve('pg');
+} catch {
+  dependenciesAvailable = false;
+}
+
+test('findAll lists inventory with low-stock alert flags', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const inventoryService = require('../src/services/inventoryService');
+  const originalQuery = database.query;
+  let selectSql;
+  let selectParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params = []) => {
+    selectSql = sql;
+    selectParams = params;
+
+    return {
+      rowCount: 2,
+      rows: [
+        {
+          id: '1',
+          product_id: '10',
+          variant_id: null,
+          branch_id: '3',
+          quantity: 4,
+          last_updated: new Date('2026-05-01T00:00:00.000Z'),
+          reorder_level: 5,
+          product_name: 'Coffee',
+          product_sku: 'COFFEE',
+          product_barcode: null,
+          product_status: 'active',
+          variant_name: null,
+          variant_sku: null,
+          variant_barcode: null,
+          variant_status: null,
+          branch_name: 'Downtown',
+          branch_status: 'active',
+        },
+        {
+          id: '2',
+          product_id: '11',
+          variant_id: '21',
+          branch_id: '3',
+          quantity: 8,
+          last_updated: new Date('2026-05-01T00:00:00.000Z'),
+          reorder_level: 5,
+          product_name: 'Tea',
+          product_sku: 'TEA',
+          product_barcode: null,
+          product_status: 'active',
+          variant_name: 'Large',
+          variant_sku: 'TEA-L',
+          variant_barcode: null,
+          variant_status: 'active',
+          branch_name: 'Downtown',
+          branch_status: 'active',
+        },
+      ],
+    };
+  };
+
+  const inventory = await inventoryService.findAll();
+
+  assert.match(selectSql, /FROM inventory/);
+  assert.match(
+    selectSql,
+    /COALESCE\(product_variants\.reorder_level, products\.reorder_level\)/
+  );
+  assert.match(selectSql, /products\.deleted_at IS NULL/);
+  assert.match(selectSql, /branches\.deleted_at IS NULL/);
+  assert.deepEqual(selectParams, []);
+  assert.equal(inventory[0].lowStockAlert, true);
+  assert.equal(inventory[0].reorderLevel, 5);
+  assert.equal(inventory[0].variant, null);
+  assert.equal(inventory[1].lowStockAlert, false);
+  assert.equal(inventory[1].variant.sku, 'TEA-L');
+});
+
+test('findAll filters inventory by branch id', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const inventoryService = require('../src/services/inventoryService');
+  const originalQuery = database.query;
+  let selectSql;
+  let selectParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params = []) => {
+    selectSql = sql;
+    selectParams = params;
+
+    return { rowCount: 0, rows: [] };
+  };
+
+  await inventoryService.findAll({ branchId: '7' });
+
+  assert.match(selectSql, /inventory\.branch_id = \$1/);
+  assert.deepEqual(selectParams, [7]);
+});

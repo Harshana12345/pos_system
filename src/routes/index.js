@@ -7,6 +7,7 @@ const branchRoutes = require('./branchRoutes');
 const categoryRoutes = require('./categoryRoutes');
 const employeeRoutes = require('./employeeRoutes');
 const healthRoutes = require('./healthRoutes');
+const inventoryRoutes = require('./inventoryRoutes');
 const productRoutes = require('./productRoutes');
 
 const router = Router();
@@ -18,6 +19,7 @@ router.use('/brands', brandRoutes);
 router.use('/branches', branchRoutes);
 router.use('/categories', categoryRoutes);
 router.use('/employees', employeeRoutes);
+router.use('/inventory', inventoryRoutes);
 router.use('/products', productRoutes);
 
 module.exports = router;
