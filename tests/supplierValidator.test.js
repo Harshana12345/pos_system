@@ -3,6 +3,7 @@ const test = require('node:test');
 
 const {
   validateSupplierId,
+  validateSupplierPaymentPayload,
   validateSupplierPayload,
 } = require('../src/validators/supplierValidator');
 
@@ -47,4 +48,35 @@ test('supplier payload validation rejects invalid details', () => {
   assert.match(errors.join(' '), /Supplier notes must be a string/);
   assert.match(errors.join(' '), /Supplier balance must be a non-negative number/);
   assert.match(errors.join(' '), /Supplier status must be active or inactive/);
+});
+
+test('supplier payment payload validation accepts valid details', () => {
+  const errors = validateSupplierPaymentPayload({
+    amount: '10.50',
+    method: 'cash',
+    referenceNumber: 'PAY-001',
+    notes: 'Partial payment',
+    paidAt: '2026-05-10T10:00:00.000Z',
+  });
+
+  assert.deepEqual(errors, []);
+});
+
+test('supplier payment payload validation rejects invalid details', () => {
+  const errors = validateSupplierPaymentPayload({
+    amount: 0,
+    method: 123,
+    referenceNumber: 123,
+    notes: 123,
+    paidAt: 'not-a-date',
+  });
+
+  assert.match(errors.join(' '), /Supplier payment amount must be a positive number/);
+  assert.match(errors.join(' '), /Supplier payment method must be a string/);
+  assert.match(
+    errors.join(' '),
+    /Supplier payment reference number must be a string/
+  );
+  assert.match(errors.join(' '), /Supplier payment notes must be a string/);
+  assert.match(errors.join(' '), /Supplier payment date must be a valid date/);
 });

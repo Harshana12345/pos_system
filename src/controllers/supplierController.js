@@ -2,6 +2,7 @@ const supplierService = require('../services/supplierService');
 const HttpError = require('../utils/httpError');
 const {
   validateSupplierId,
+  validateSupplierPaymentPayload,
   validateSupplierPayload,
 } = require('../validators/supplierValidator');
 
@@ -55,6 +56,32 @@ async function createSupplier(req, res, next) {
   }
 }
 
+async function createSupplierPayment(req, res, next) {
+  const errors = [
+    ...validateSupplierId(req.params.id),
+    ...validateSupplierPaymentPayload(req.body),
+  ];
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const payment = await supplierService.createSupplierPayment(
+      req.params.id,
+      req.user,
+      req.body
+    );
+
+    res.status(201).json({
+      data: payment,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function updateSupplier(req, res, next) {
   const errors = [
     ...validateSupplierId(req.params.id),
@@ -95,6 +122,7 @@ async function deleteSupplier(req, res, next) {
 }
 
 module.exports = {
+  createSupplierPayment,
   createSupplier,
   deleteSupplier,
   getSupplierPurchaseHistory,

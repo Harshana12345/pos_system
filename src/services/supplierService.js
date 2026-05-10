@@ -24,6 +24,18 @@ function normalizeBalance(value) {
   return Number(value);
 }
 
+function normalizePaymentDate(value) {
+  if (value === undefined || value === null || value === '') {
+    return new Date();
+  }
+
+  return new Date(value);
+}
+
+function roundCurrency(value) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
 function mapSupplierRow(row) {
   return new Supplier({
     id: row.id,
@@ -38,6 +50,21 @@ function mapSupplierRow(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
+}
+
+function mapSupplierPaymentRow(row, supplierBalance) {
+  return {
+    id: row.id,
+    supplierId: row.supplier_id,
+    amount: Number(row.amount),
+    method: row.method,
+    referenceNumber: row.reference_number,
+    notes: row.notes,
+    paidAt: row.paid_at,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    supplierBalance,
+  };
 }
 
 async function findAll() {
@@ -244,11 +271,97 @@ async function findPurchaseHistoryById(id) {
   );
 }
 
+async function createSupplierPayment(
+  id,
+  requester,
+  { amount, method, referenceNumber, reference_number, notes, paidAt, paid_at }
+) {
+  const supplierId = Number(id);
+  const paymentAmount = roundCurrency(Number(amount));
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const supplierResult = await client.query(
+      `SELECT id,
+              balance
+       FROM suppliers
+       WHERE id = $1
+       FOR UPDATE`,
+      [supplierId]
+    );
+
+    if (supplierResult.rowCount === 0) {
+      throw new HttpError(404, 'Supplier not found.');
+    }
+
+    const currentBalance = Number(supplierResult.rows[0].balance);
+
+    if (paymentAmount > currentBalance) {
+      throw new HttpError(400, 'Supplier payment amount exceeds outstanding balance.');
+    }
+
+    const paymentResult = await client.query(
+      `INSERT INTO supplier_payments (
+         supplier_id,
+         amount,
+         method,
+         reference_number,
+         notes,
+         paid_at,
+         created_by
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id,
+                 supplier_id,
+                 amount,
+                 method,
+                 reference_number,
+                 notes,
+                 paid_at,
+                 created_by,
+                 created_at`,
+      [
+        supplierId,
+        paymentAmount,
+        normalizeNullableString(method),
+        normalizeNullableString(referenceNumber ?? reference_number),
+        normalizeNullableString(notes),
+        normalizePaymentDate(paidAt ?? paid_at),
+        requester?.id ?? null,
+      ]
+    );
+
+    const updatedBalance = roundCurrency(currentBalance - paymentAmount);
+
+    await client.query(
+      `UPDATE suppliers
+       SET balance = $2,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [supplierId, updatedBalance]
+    );
+
+    await client.query('COMMIT');
+
+    return mapSupplierPaymentRow(paymentResult.rows[0], updatedBalance);
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
+  createSupplierPayment,
   createSupplier,
   deleteSupplier,
   findAll,
   findPurchaseHistoryById,
+  mapSupplierPaymentRow,
   mapSupplierRow,
   updateSupplier,
 };

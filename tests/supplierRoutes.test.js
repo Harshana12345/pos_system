@@ -31,10 +31,15 @@ test('supplier routes register CRUD endpoints', {
       layer.route?.path === '/:id/purchase-history' &&
       layer.route.methods.get === true
   );
+  const hasPaymentRoute = supplierRoutes.stack.some(
+    (layer) =>
+      layer.route?.path === '/:id/payments' && layer.route.methods.post === true
+  );
 
   assert.equal(hasListRoute, true);
   assert.equal(hasCreateRoute, true);
   assert.equal(hasUpdateRoute, true);
   assert.equal(hasDeleteRoute, true);
   assert.equal(hasPurchaseHistoryRoute, true);
+  assert.equal(hasPaymentRoute, true);
 });

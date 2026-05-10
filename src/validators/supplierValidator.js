@@ -68,7 +68,53 @@ function validateSupplierPayload(payload) {
   return errors;
 }
 
+function validateSupplierPaymentPayload(payload) {
+  const errors = [];
+
+  if (!isPlainObject(payload)) {
+    return ['Supplier payment details are required.'];
+  }
+
+  const amount = Number(payload.amount);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    errors.push('Supplier payment amount must be a positive number.');
+  }
+
+  validateOptionalString(payload, 'method', 'Supplier payment method', errors);
+  validateOptionalString(
+    payload,
+    'referenceNumber',
+    'Supplier payment reference number',
+    errors
+  );
+  validateOptionalString(
+    payload,
+    'reference_number',
+    'Supplier payment reference number',
+    errors
+  );
+  validateOptionalString(payload, 'notes', 'Supplier payment notes', errors);
+
+  if (
+    payload.paidAt !== undefined &&
+    payload.paid_at !== undefined &&
+    payload.paidAt !== payload.paid_at
+  ) {
+    errors.push('Supplier payment date must be provided once.');
+  }
+
+  const paidAt = payload.paidAt ?? payload.paid_at;
+
+  if (paidAt !== undefined && Number.isNaN(Date.parse(paidAt))) {
+    errors.push('Supplier payment date must be a valid date.');
+  }
+
+  return errors;
+}
+
 module.exports = {
   validateSupplierId,
+  validateSupplierPaymentPayload,
   validateSupplierPayload,
 };

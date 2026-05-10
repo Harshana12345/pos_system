@@ -293,3 +293,146 @@ test('findPurchaseHistoryById rejects missing suppliers', {
     statusCode: 404,
   });
 });
+
+test('createSupplierPayment records payment and reduces supplier balance', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const supplierService = require('../src/services/supplierService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  const client = {
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rowCount: 0, rows: [] };
+      }
+
+      if (/FROM suppliers/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [{ id: '1', balance: '25.75' }],
+        };
+      }
+
+      if (/INSERT INTO supplier_payments/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '5',
+              supplier_id: '1',
+              amount: '10.50',
+              method: 'cash',
+              reference_number: 'PAY-001',
+              notes: 'Partial payment',
+              paid_at: new Date('2026-05-10T10:00:00.000Z'),
+              created_by: '7',
+              created_at: new Date('2026-05-10T10:01:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      return {
+        rowCount: 1,
+        rows: [],
+      };
+    },
+    release: () => {},
+  };
+
+  database.pool.connect = async () => client;
+
+  const payment = await supplierService.createSupplierPayment(
+    '1',
+    { id: '7' },
+    {
+      amount: '10.50',
+      method: ' cash ',
+      referenceNumber: ' PAY-001 ',
+      notes: ' Partial payment ',
+      paidAt: '2026-05-10T10:00:00.000Z',
+    }
+  );
+
+  assert.equal(queries[0].sql, 'BEGIN');
+  assert.match(queries[1].sql, /FROM suppliers/);
+  assert.match(queries[1].sql, /FOR UPDATE/);
+  assert.deepEqual(queries[1].params, [1]);
+  assert.match(queries[2].sql, /INSERT INTO supplier_payments/);
+  assert.deepEqual(queries[2].params.slice(0, 5), [
+    1,
+    10.5,
+    'cash',
+    'PAY-001',
+    'Partial payment',
+  ]);
+  assert.equal(queries[2].params[6], '7');
+  assert.match(queries[3].sql, /UPDATE suppliers/);
+  assert.deepEqual(queries[3].params, [1, 15.25]);
+  assert.equal(queries[4].sql, 'COMMIT');
+  assert.equal(payment.id, '5');
+  assert.equal(payment.amount, 10.5);
+  assert.equal(payment.supplierBalance, 15.25);
+});
+
+test('createSupplierPayment rejects missing suppliers and overpayments', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const supplierService = require('../src/services/supplierService');
+  const originalConnect = database.pool.connect;
+  const balances = [null, '5.00'];
+  const queries = [];
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => ({
+    query: async (sql) => {
+      queries.push(sql);
+
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rowCount: 0, rows: [] };
+      }
+
+      const balance = balances.shift();
+
+      if (balance === null) {
+        return { rowCount: 0, rows: [] };
+      }
+
+      return {
+        rowCount: 1,
+        rows: [{ id: '1', balance }],
+      };
+    },
+    release: () => {},
+  });
+
+  await assert.rejects(
+    () => supplierService.createSupplierPayment('99', null, { amount: '1.00' }),
+    {
+      message: 'Supplier not found.',
+      statusCode: 404,
+    }
+  );
+
+  await assert.rejects(
+    () => supplierService.createSupplierPayment('1', null, { amount: '10.00' }),
+    {
+      message: 'Supplier payment amount exceeds outstanding balance.',
+      statusCode: 400,
+    }
+  );
+
+  assert.equal(queries.filter((sql) => sql === 'ROLLBACK').length, 2);
+});
