@@ -102,6 +102,25 @@ async function listInventoryMovements(req, res, next) {
   }
 }
 
+async function listInventoryValuation(req, res, next) {
+  const errors = validateInventoryFilters(req.query);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const valuation = await inventoryService.findValuation(req.query);
+
+    res.status(200).json({
+      data: valuation,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function adjustInventory(req, res, next) {
   const errors = validateInventoryAdjustmentPayload(req.body);
 
@@ -126,6 +145,7 @@ module.exports = {
   listExpiringInventory,
   listInventory,
   listInventoryMovements,
+  listInventoryValuation,
   listLowStockInventory,
   listOutOfStockInventory,
 };

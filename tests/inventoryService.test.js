@@ -286,6 +286,90 @@ test('findExpiring lists inventory with products expiring within threshold', {
   assert.equal(inventory[0].product.daysUntilExpiry, 5);
 });
 
+test('findValuation returns total stock value per branch', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const inventoryService = require('../src/services/inventoryService');
+  const originalQuery = database.query;
+  let selectSql;
+  let selectParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params = []) => {
+    selectSql = sql;
+    selectParams = params;
+
+    return {
+      rowCount: 2,
+      rows: [
+        {
+          branch_id: '3',
+          branch_name: 'Downtown',
+          branch_status: 'active',
+          total_quantity: '12',
+          total_stock_value: '104.50',
+        },
+        {
+          branch_id: '4',
+          branch_name: 'Airport',
+          branch_status: 'active',
+          total_quantity: '0',
+          total_stock_value: '0.00',
+        },
+      ],
+    };
+  };
+
+  const valuation = await inventoryService.findValuation();
+
+  assert.match(selectSql, /FROM branches/);
+  assert.match(selectSql, /LEFT JOIN inventory/);
+  assert.match(selectSql, /LEFT JOIN products/);
+  assert.match(selectSql, /products\.deleted_at IS NULL/);
+  assert.match(
+    selectSql,
+    /inventory\.quantity \* COALESCE\(product_variants\.cost_price, products\.cost_price\)/
+  );
+  assert.match(selectSql, /branches\.deleted_at IS NULL/);
+  assert.match(selectSql, /GROUP BY branches\.id, branches\.name, branches\.status/);
+  assert.deepEqual(selectParams, []);
+  assert.equal(valuation[0].branchId, '3');
+  assert.equal(valuation[0].totalQuantity, 12);
+  assert.equal(valuation[0].totalStockValue, 104.5);
+  assert.equal(valuation[0].branch.name, 'Downtown');
+  assert.equal(valuation[1].totalStockValue, 0);
+});
+
+test('findValuation filters valuation by branch id', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const inventoryService = require('../src/services/inventoryService');
+  const originalQuery = database.query;
+  let selectSql;
+  let selectParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params = []) => {
+    selectSql = sql;
+    selectParams = params;
+
+    return { rowCount: 0, rows: [] };
+  };
+
+  await inventoryService.findValuation({ branch_id: '7' });
+
+  assert.match(selectSql, /branches\.id = \$1/);
+  assert.deepEqual(selectParams, [7]);
+});
+
 test('findMovements lists stock movements with filters', {
   skip: !dependenciesAvailable,
 }, async (t) => {

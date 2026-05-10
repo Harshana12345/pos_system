@@ -219,6 +219,68 @@ function mapMovementRow(row) {
   };
 }
 
+function mapValuationRow(row) {
+  return {
+    branchId: row.branch_id,
+    totalQuantity: Number(row.total_quantity),
+    totalStockValue: Number(row.total_stock_value),
+    branch: {
+      id: row.branch_id,
+      name: row.branch_name,
+      status: row.branch_status,
+    },
+  };
+}
+
+async function findValuation(filters = {}) {
+  const branchId = normalizeBranchId(filters);
+  const params = [];
+  const where = ['branches.deleted_at IS NULL'];
+
+  if (branchId !== null) {
+    params.push(branchId);
+    where.push(`branches.id = $${params.length}`);
+  }
+
+  const result = await database.query(
+    `SELECT branches.id AS branch_id,
+            branches.name AS branch_name,
+            branches.status AS branch_status,
+            COALESCE(
+              SUM(
+                CASE
+                  WHEN products.id IS NULL THEN 0
+                  ELSE inventory.quantity
+                END
+              ),
+              0
+            )::integer AS total_quantity,
+            COALESCE(
+              SUM(
+                CASE
+                  WHEN products.id IS NULL THEN 0
+                  ELSE inventory.quantity * COALESCE(product_variants.cost_price, products.cost_price)
+                END
+              ),
+              0
+            )::numeric(12, 2) AS total_stock_value
+     FROM branches
+     LEFT JOIN inventory
+       ON inventory.branch_id = branches.id
+     LEFT JOIN products
+       ON products.id = inventory.product_id
+      AND products.deleted_at IS NULL
+     LEFT JOIN product_variants
+       ON product_variants.id = inventory.variant_id
+     WHERE ${where.join(' AND ')}
+     GROUP BY branches.id, branches.name, branches.status
+     ORDER BY branches.id ASC`,
+    params
+  );
+
+  return result.rows.map(mapValuationRow);
+}
+
 async function findMovements(filters = {}) {
   const normalizedFilters = normalizeMovementFilters(filters);
   const params = [];
@@ -421,8 +483,10 @@ module.exports = {
   findExpiring,
   findLowStock,
   findOutOfStock,
+  findValuation,
   findMovements,
   mapAdjustmentRow,
   mapInventoryRow,
   mapMovementRow,
+  mapValuationRow,
 };
