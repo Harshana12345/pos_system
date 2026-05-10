@@ -105,6 +105,142 @@ test('findById returns a customer or rejects missing customers', {
   assert.equal(customer.id, '1');
 });
 
+test('findPurchaseHistoryById returns customer sales with items', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const customerService = require('../src/services/customerService');
+  const originalQuery = database.query;
+  const queries = [];
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    queries.push({ sql, params });
+
+    if (/FROM customers/.test(sql)) {
+      return {
+        rowCount: 1,
+        rows: [{ id: '1' }],
+      };
+    }
+
+    return {
+      rowCount: 3,
+      rows: [
+        {
+          id: '20',
+          customer_id: '1',
+          branch_id: '2',
+          status: 'completed',
+          subtotal: '40.00',
+          discount_amount: '2.00',
+          tax_amount: '1.50',
+          total_amount: '39.50',
+          paid_amount: '39.50',
+          balance_amount: '0.00',
+          payment_status: 'paid',
+          created_by: '7',
+          created_at: new Date('2026-05-10T10:00:00.000Z'),
+          item_id: '200',
+          sale_id: '20',
+          product_id: '30',
+          variant_id: null,
+          quantity: '2',
+          unit_price: '10.00',
+          item_discount_amount: '1.00',
+          line_total: '19.00',
+        },
+        {
+          id: '20',
+          customer_id: '1',
+          branch_id: '2',
+          status: 'completed',
+          subtotal: '40.00',
+          discount_amount: '2.00',
+          tax_amount: '1.50',
+          total_amount: '39.50',
+          paid_amount: '39.50',
+          balance_amount: '0.00',
+          payment_status: 'paid',
+          created_by: '7',
+          created_at: new Date('2026-05-10T10:00:00.000Z'),
+          item_id: '201',
+          sale_id: '20',
+          product_id: '31',
+          variant_id: '4',
+          quantity: '1',
+          unit_price: '20.00',
+          item_discount_amount: '1.00',
+          line_total: '19.00',
+        },
+        {
+          id: '19',
+          customer_id: '1',
+          branch_id: '2',
+          status: 'voided',
+          subtotal: '0.00',
+          discount_amount: '0.00',
+          tax_amount: '0.00',
+          total_amount: '0.00',
+          paid_amount: '0.00',
+          balance_amount: '0.00',
+          payment_status: 'voided',
+          created_by: '7',
+          created_at: new Date('2026-05-09T10:00:00.000Z'),
+          item_id: null,
+          sale_id: null,
+          product_id: null,
+          variant_id: null,
+          quantity: null,
+          unit_price: null,
+          item_discount_amount: null,
+          line_total: null,
+        },
+      ],
+    };
+  };
+
+  const sales = await customerService.findPurchaseHistoryById('1');
+
+  assert.match(queries[0].sql, /FROM customers/);
+  assert.match(queries[1].sql, /FROM sales s/);
+  assert.match(queries[1].sql, /LEFT JOIN sale_items si/);
+  assert.deepEqual(queries[0].params, [1]);
+  assert.deepEqual(queries[1].params, [1]);
+  assert.equal(sales.length, 2);
+  assert.equal(sales[0].id, '20');
+  assert.equal(sales[0].totalAmount, 39.5);
+  assert.equal(sales[0].items.length, 2);
+  assert.equal(sales[0].items[0].lineTotal, 19);
+  assert.equal(sales[1].id, '19');
+  assert.deepEqual(sales[1].items, []);
+});
+
+test('findPurchaseHistoryById rejects missing customers', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const customerService = require('../src/services/customerService');
+  const originalQuery = database.query;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async () => ({
+    rowCount: 0,
+    rows: [],
+  });
+
+  await assert.rejects(() => customerService.findPurchaseHistoryById('99'), {
+    message: 'Customer not found.',
+    statusCode: 404,
+  });
+});
+
 test('createCustomer inserts customer details', {
   skip: !dependenciesAvailable,
 }, async (t) => {

@@ -36,6 +36,25 @@ async function getCustomer(req, res, next) {
   }
 }
 
+async function getCustomerPurchaseHistory(req, res, next) {
+  const errors = validateCustomerId(req.params.id);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const sales = await customerService.findPurchaseHistoryById(req.params.id);
+
+    res.status(200).json({
+      data: sales,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function createCustomer(req, res, next) {
   const errors = validateCustomerPayload(req.body);
 
@@ -98,6 +117,7 @@ module.exports = {
   createCustomer,
   deleteCustomer,
   getCustomer,
+  getCustomerPurchaseHistory,
   listCustomers,
   updateCustomer,
 };
