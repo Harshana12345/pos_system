@@ -368,3 +368,308 @@ test(
     );
   }
 );
+
+test(
+  'updateEmployee updates the linked user and employee role assignment in one transaction',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalConnect = database.pool.connect;
+    const queries = [];
+    let released = false;
+
+    t.after(() => {
+      database.pool.connect = originalConnect;
+    });
+
+    database.pool.connect = async () => ({
+      query: async (sql, params = []) => {
+        queries.push({ sql, params });
+
+        if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+          return { rowCount: 0, rows: [] };
+        }
+
+        if (/SELECT id, user_id, branch_id/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: '21', user_id: '11', branch_id: '4' }] };
+        }
+
+        if (/FROM roles/.test(sql) && params[0] === 1) {
+          return { rowCount: 1, rows: [{ name: 'admin' }] };
+        }
+
+        if (/FROM roles/.test(sql) && params[0] === 3) {
+          return { rowCount: 1, rows: [{ id: '3' }] };
+        }
+
+        if (/FROM branches/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: '4' }] };
+        }
+
+        if (/UPDATE users/.test(sql)) {
+          return { rowCount: 1, rows: [] };
+        }
+
+        if (/UPDATE employees/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: '21' }] };
+        }
+
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '21',
+              user_id: '11',
+              role_id: '3',
+              branch_id: '4',
+              salary: '50000.00',
+              shift: 'evening',
+              attendance: { daysPresent: 20 },
+              status: 'active',
+              created_at: new Date('2026-05-01T00:00:00.000Z'),
+              updated_at: new Date('2026-05-10T00:00:00.000Z'),
+              user_name: 'Senior Cashier',
+              user_email: 'senior@example.com',
+              user_status: 'active',
+              role_name: 'cashier',
+              branch_name: 'Main',
+            },
+          ],
+        };
+      },
+      release: () => {
+        released = true;
+      },
+    });
+
+    const employee = await employeeService.updateEmployee(
+      {
+        roleId: 1,
+        branchId: 2,
+      },
+      '21',
+      {
+        name: ' Senior Cashier ',
+        email: 'SENIOR@EXAMPLE.COM ',
+        roleId: '3',
+        branchId: '4',
+        salary: '50000',
+        shift: ' evening ',
+        attendance: { daysPresent: 20 },
+      }
+    );
+    const updateUserQuery = queries.find(({ sql }) => /UPDATE users/.test(sql));
+    const updateEmployeeQuery = queries.find(({ sql }) => /UPDATE employees/.test(sql));
+
+    assert.equal(queries[0].sql, 'BEGIN');
+    assert.equal(queries.at(-1).sql, 'COMMIT');
+    assert.equal(updateUserQuery.params[0], 11);
+    assert.equal(updateUserQuery.params[1], 'Senior Cashier');
+    assert.equal(updateUserQuery.params[2], 'senior@example.com');
+    assert.equal(updateUserQuery.params[3], 3);
+    assert.equal(updateUserQuery.params[4], 4);
+    assert.equal(updateEmployeeQuery.params[1], 3);
+    assert.equal(updateEmployeeQuery.params[2], 4);
+    assert.equal(updateEmployeeQuery.params[3], 50000);
+    assert.equal(updateEmployeeQuery.params[4], 'evening');
+    assert.equal(employee.id, '21');
+    assert.equal(employee.role.name, 'cashier');
+    assert.equal(released, true);
+  }
+);
+
+test(
+  'updateEmployee returns not found for missing employees',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalConnect = database.pool.connect;
+    const queries = [];
+
+    t.after(() => {
+      database.pool.connect = originalConnect;
+    });
+
+    database.pool.connect = async () => ({
+      query: async (sql, params = []) => {
+        queries.push({ sql, params });
+
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') {
+          return { rowCount: 0, rows: [] };
+        }
+
+        if (/SELECT id, user_id, branch_id/.test(sql)) {
+          return { rowCount: 0, rows: [] };
+        }
+
+        throw new Error('Authorization and updates should not run when employee is missing.');
+      },
+      release: () => {},
+    });
+
+    await assert.rejects(
+      () =>
+        employeeService.updateEmployee(
+          {
+            roleId: 1,
+            branchId: 2,
+          },
+          '99',
+          {
+            name: 'Cashier User',
+            email: 'cashier@example.com',
+            roleId: 3,
+            branchId: 4,
+          }
+        ),
+      {
+        message: 'Employee not found.',
+        statusCode: 404,
+      }
+    );
+
+    assert.equal(queries.at(-1).sql, 'ROLLBACK');
+  }
+);
+
+test(
+  'updateEmployee rolls back duplicate user emails',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalConnect = database.pool.connect;
+    const queries = [];
+
+    t.after(() => {
+      database.pool.connect = originalConnect;
+    });
+
+    database.pool.connect = async () => ({
+      query: async (sql, params = []) => {
+        queries.push({ sql, params });
+
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') {
+          return { rowCount: 0, rows: [] };
+        }
+
+        if (/SELECT id, user_id, branch_id/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: '21', user_id: '11', branch_id: '4' }] };
+        }
+
+        if (/FROM roles/.test(sql) && params[0] === 1) {
+          return { rowCount: 1, rows: [{ name: 'admin' }] };
+        }
+
+        if (/FROM roles/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: '3' }] };
+        }
+
+        if (/FROM branches/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: '4' }] };
+        }
+
+        if (/UPDATE users/.test(sql)) {
+          const error = new Error('duplicate key value violates unique constraint');
+          error.code = '23505';
+          throw error;
+        }
+
+        throw new Error('Employee update should not run after duplicate user email.');
+      },
+      release: () => {},
+    });
+
+    await assert.rejects(
+      () =>
+        employeeService.updateEmployee(
+          {
+            roleId: 1,
+            branchId: 2,
+          },
+          '21',
+          {
+            name: 'Cashier User',
+            email: 'cashier@example.com',
+            roleId: 3,
+            branchId: 4,
+          }
+        ),
+      {
+        message: 'A user with this email already exists.',
+        statusCode: 409,
+      }
+    );
+
+    assert.equal(queries.at(-1).sql, 'ROLLBACK');
+  }
+);
+
+test(
+  'updateEmployee restricts managers to their own branch',
+  {
+    skip: !dependenciesAvailable,
+  },
+  async (t) => {
+    const database = require('../src/config/database');
+    const employeeService = require('../src/services/employeeService');
+    const originalConnect = database.pool.connect;
+    const queries = [];
+
+    t.after(() => {
+      database.pool.connect = originalConnect;
+    });
+
+    database.pool.connect = async () => ({
+      query: async (sql, params = []) => {
+        queries.push({ sql, params });
+
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') {
+          return { rowCount: 0, rows: [] };
+        }
+
+        if (/SELECT id, user_id, branch_id/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: '21', user_id: '11', branch_id: '7' }] };
+        }
+
+        if (/FROM roles/.test(sql)) {
+          return { rowCount: 1, rows: [{ name: 'manager' }] };
+        }
+
+        throw new Error('Role, branch, and updates should not run after authorization fails.');
+      },
+      release: () => {},
+    });
+
+    await assert.rejects(
+      () =>
+        employeeService.updateEmployee(
+          {
+            roleId: 2,
+            branchId: 7,
+          },
+          '21',
+          {
+            name: 'Cashier User',
+            email: 'cashier@example.com',
+            roleId: 3,
+            branchId: 8,
+          }
+        ),
+      {
+        message: 'Managers can only update employees for their branch.',
+        statusCode: 403,
+      }
+    );
+
+    assert.equal(queries.at(-1).sql, 'ROLLBACK');
+  }
+);

@@ -1,7 +1,11 @@
 const assert = require('node:assert');
 const test = require('node:test');
 
-const { validateCreateEmployeePayload } = require('../src/validators/employeeValidator');
+const {
+  validateCreateEmployeePayload,
+  validateEmployeeId,
+  validateUpdateEmployeePayload,
+} = require('../src/validators/employeeValidator');
 
 test('create employee payload validation requires expected fields', () => {
   const errors = validateCreateEmployeePayload({});
@@ -50,4 +54,35 @@ test('create employee payload validation rejects invalid optional fields', () =>
     'Attendance must be an object.',
     'Employee status must be active or inactive.',
   ]);
+});
+
+test('employee id validation requires a positive integer', () => {
+  assert.deepEqual(validateEmployeeId('abc'), ['Employee ID must be a positive integer.']);
+  assert.deepEqual(validateEmployeeId('1'), []);
+});
+
+test('update employee payload validation requires expected fields without password', () => {
+  const errors = validateUpdateEmployeePayload({});
+
+  assert.deepEqual(errors, [
+    'Name is required.',
+    'Email is required.',
+    'Role ID must be a positive integer.',
+    'Branch ID must be a positive integer.',
+  ]);
+});
+
+test('update employee payload validation accepts valid fields', () => {
+  const errors = validateUpdateEmployeePayload({
+    name: 'Cashier User',
+    email: 'cashier@example.com',
+    roleId: 3,
+    branchId: 1,
+    salary: 45000,
+    shift: 'morning',
+    attendance: {},
+    status: 'active',
+  });
+
+  assert.deepEqual(errors, []);
 });

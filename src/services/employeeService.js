@@ -67,6 +67,33 @@ async function ensureRequesterCanCreateEmployee(client, requester, branchId) {
   }
 }
 
+async function ensureRequesterCanUpdateEmployee(client, requester, currentBranchId, nextBranchId) {
+  const result = await client.query(
+    `SELECT name
+     FROM roles
+     WHERE id = $1
+     LIMIT 1`,
+    [Number(requester.roleId)]
+  );
+  const requesterRoleName = result.rows[0]?.name;
+
+  if (!requesterRoleName) {
+    throw new HttpError(403, 'Authenticated user role is not recognized.');
+  }
+
+  if (!['admin', 'manager'].includes(requesterRoleName)) {
+    throw new HttpError(403, 'You are not allowed to update employees.');
+  }
+
+  if (
+    requesterRoleName === 'manager' &&
+    (Number(requester.branchId) !== Number(currentBranchId) ||
+      Number(requester.branchId) !== Number(nextBranchId))
+  ) {
+    throw new HttpError(403, 'Managers can only update employees for their branch.');
+  }
+}
+
 async function ensureRoleExists(client, roleId) {
   const result = await client.query(
     `SELECT id
@@ -189,6 +216,121 @@ async function createEmployee(
   }
 }
 
+async function updateEmployee(
+  requester,
+  id,
+  { name, email, roleId, branchId, salary, shift, attendance, status }
+) {
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const existingResult = await client.query(
+      `SELECT id, user_id, branch_id
+       FROM employees
+       WHERE id = $1
+       LIMIT 1`,
+      [Number(id)]
+    );
+
+    if (existingResult.rowCount === 0) {
+      throw new HttpError(404, 'Employee not found.');
+    }
+
+    const existingEmployee = existingResult.rows[0];
+
+    await ensureRequesterCanUpdateEmployee(
+      client,
+      requester,
+      existingEmployee.branch_id,
+      branchId
+    );
+    await ensureRoleExists(client, roleId);
+    await ensureBranchExists(client, branchId);
+
+    await client.query(
+      `UPDATE users
+       SET name = $2,
+           email = $3,
+           role_id = $4,
+           branch_id = $5,
+           status = $6,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [
+        Number(existingEmployee.user_id),
+        name.trim(),
+        email.trim().toLowerCase(),
+        Number(roleId),
+        Number(branchId),
+        status || 'active',
+      ]
+    );
+
+    const employeeResult = await client.query(
+      `UPDATE employees
+       SET role_id = $2,
+           branch_id = $3,
+           salary = $4,
+           shift = $5,
+           attendance = $6,
+           status = $7,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+       RETURNING id`,
+      [
+        Number(id),
+        Number(roleId),
+        Number(branchId),
+        salary === undefined ? 0 : Number(salary),
+        normalizeNullableString(shift),
+        attendance || {},
+        status || 'active',
+      ]
+    );
+
+    const result = await client.query(
+      `SELECT e.id,
+              e.user_id,
+              e.role_id,
+              e.branch_id,
+              e.salary,
+              e.shift,
+              e.attendance,
+              e.status,
+              e.created_at,
+              e.updated_at,
+              u.name AS user_name,
+              u.email AS user_email,
+              u.status AS user_status,
+              r.name AS role_name,
+              b.name AS branch_name
+       FROM employees e
+       INNER JOIN users u ON u.id = e.user_id
+       INNER JOIN roles r ON r.id = e.role_id
+       INNER JOIN branches b ON b.id = e.branch_id
+       WHERE e.id = $1
+       LIMIT 1`,
+      [employeeResult.rows[0].id]
+    );
+
+    await client.query('COMMIT');
+
+    return mapEmployeeRow(result.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    if (error.code === '23505') {
+      throw new HttpError(409, 'A user with this email already exists.');
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function findAllForUser(user) {
   const requesterRoleName = await findRequesterRoleName(user.roleId);
 
@@ -231,4 +373,4 @@ async function findAllForUser(user) {
   return result.rows.map(mapEmployeeRow);
 }
 
-module.exports = { createEmployee, findAllForUser, mapEmployeeRow };
+module.exports = { createEmployee, findAllForUser, mapEmployeeRow, updateEmployee };
