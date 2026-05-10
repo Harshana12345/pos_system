@@ -39,6 +39,23 @@ async function updateProduct(req, res, next) {
   }
 }
 
+async function deleteProduct(req, res, next) {
+  const errors = validateProductId(req.params.id);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    await productService.deleteProduct(req.params.id);
+
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+}
+
 function uploadProductImages(req, res) {
   const files = req.files || [];
 
@@ -54,4 +71,4 @@ function uploadProductImages(req, res) {
   });
 }
 
-module.exports = { listProducts, updateProduct, uploadProductImages };
+module.exports = { deleteProduct, listProducts, updateProduct, uploadProductImages };

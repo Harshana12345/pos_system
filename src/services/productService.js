@@ -77,6 +77,7 @@ function mapProductRow(row, { variants = [], images = [] } = {}) {
     supplierId: row.supplier_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    deletedAt: row.deleted_at,
     variants,
     images,
   });
@@ -142,9 +143,11 @@ async function findProductDetailsById(client, productId) {
             expiry_date,
             supplier_id,
             created_at,
-            updated_at
+            updated_at,
+            deleted_at
      FROM products
      WHERE id = $1
+       AND deleted_at IS NULL
      LIMIT 1`,
     [Number(productId)]
   );
@@ -176,8 +179,10 @@ async function findAll() {
             expiry_date,
             supplier_id,
             created_at,
-            updated_at
+            updated_at,
+            deleted_at
      FROM products
+     WHERE deleted_at IS NULL
      ORDER BY id ASC`
   );
 
@@ -293,6 +298,7 @@ async function updateProduct(
            supplier_id = $14,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1
+         AND deleted_at IS NULL
        RETURNING id,
                  name,
                  sku,
@@ -308,7 +314,8 @@ async function updateProduct(
                  expiry_date,
                  supplier_id,
                  created_at,
-                 updated_at`,
+                 updated_at,
+                 deleted_at`,
       [
         Number(id),
         name.trim(),
@@ -361,7 +368,24 @@ async function updateProduct(
   }
 }
 
+async function deleteProduct(id) {
+  const result = await database.query(
+    `UPDATE products
+     SET deleted_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+       AND deleted_at IS NULL
+     RETURNING id`,
+    [Number(id)]
+  );
+
+  if (result.rowCount === 0) {
+    throw new HttpError(404, 'Product not found.');
+  }
+}
+
 module.exports = {
+  deleteProduct,
   findAll,
   mapProductImageRow,
   mapProductRow,

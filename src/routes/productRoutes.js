@@ -1,6 +1,7 @@
 const { Router } = require('express');
 
 const {
+  deleteProduct,
   listProducts,
   updateProduct,
   uploadProductImages,
@@ -12,5 +13,6 @@ const router = Router();
 router.get('/', listProducts);
 router.post('/:id/images', productImageUpload.array('images', PRODUCT_IMAGE_MAX_FILES), uploadProductImages);
 router.put('/:id', updateProduct);
+router.delete('/:id', deleteProduct);
 
 module.exports = router;

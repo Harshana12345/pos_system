@@ -16,6 +16,7 @@ class Product {
     supplierId,
     createdAt,
     updatedAt,
+    deletedAt,
     variants = [],
     images = [],
     price,
@@ -37,6 +38,7 @@ class Product {
     this.supplierId = supplierId;
     this.createdAt = createdAt;
     this.updatedAt = updatedAt;
+    this.deletedAt = deletedAt;
     this.stockQuantity = stockQuantity;
     this.variants = variants;
     this.images = images;
