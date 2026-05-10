@@ -1,6 +1,7 @@
 const authService = require('../services/authService');
 const HttpError = require('../utils/httpError');
 const {
+  validateForgotPasswordPayload,
   validateLoginPayload,
   validateLogoutPayload,
   validateRefreshPayload,
@@ -20,6 +21,25 @@ async function register(req, res, next) {
 
     res.status(201).json({
       data: user,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function forgotPassword(req, res, next) {
+  const errors = validateForgotPasswordPayload(req.body);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    await authService.requestPasswordReset(req.body);
+
+    res.status(202).json({
+      message: 'If an account exists for that email, a password reset link has been sent.',
     });
   } catch (error) {
     next(error);
@@ -81,4 +101,4 @@ async function logout(req, res, next) {
   }
 }
 
-module.exports = { login, logout, refresh, register };
+module.exports = { forgotPassword, login, logout, refresh, register };

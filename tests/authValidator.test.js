@@ -2,6 +2,7 @@ const assert = require('node:assert');
 const test = require('node:test');
 
 const {
+  validateForgotPasswordPayload,
   validateLoginPayload,
   validateLogoutPayload,
   validateRefreshPayload,
@@ -42,6 +43,21 @@ test('login payload validation accepts a valid payload', () => {
   const errors = validateLoginPayload({
     email: 'admin@example.com',
     password: 'password123',
+  });
+
+  assert.deepEqual(errors, []);
+});
+
+test('forgot password payload validation requires a valid email', () => {
+  assert.deepEqual(validateForgotPasswordPayload({}), ['Email is required.']);
+  assert.deepEqual(validateForgotPasswordPayload({ email: 'not-an-email' }), [
+    'Email must be valid.',
+  ]);
+});
+
+test('forgot password payload validation accepts a valid email', () => {
+  const errors = validateForgotPasswordPayload({
+    email: 'admin@example.com',
   });
 
   assert.deepEqual(errors, []);

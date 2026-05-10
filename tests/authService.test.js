@@ -82,6 +82,10 @@ test('loginUser validates credentials and returns a signed access token', {
   });
 
   database.query = async (sql, params) => {
+    if (sql.includes('UPDATE users')) {
+      return { rowCount: 0, rows: [] };
+    }
+
     if (sql.includes('INSERT INTO refresh_tokens')) {
       refreshInsertParams = params;
 
@@ -100,6 +104,8 @@ test('loginUser validates credentials and returns a signed access token', {
           role_id: '1',
           branch_id: '2',
           status: 'active',
+          failed_login_attempts: 0,
+          locked_at: null,
           created_at: new Date('2026-05-10T00:00:00.000Z'),
           updated_at: new Date('2026-05-10T00:00:00.000Z'),
         },
@@ -143,26 +149,46 @@ test('loginUser rejects invalid credentials', {
   const authService = require('../src/services/authService');
   const { hashPassword } = require('../src/utils/passwordHash');
   const originalQuery = database.query;
+  let updateSql;
+  let updateParams;
 
   t.after(() => {
     database.query = originalQuery;
   });
 
-  database.query = async () => ({
-    rows: [
-      {
-        id: '1',
-        name: 'Admin User',
-        email: 'admin@example.com',
-        password: await hashPassword('password123'),
-        role_id: '1',
-        branch_id: '2',
-        status: 'active',
-        created_at: new Date('2026-05-10T00:00:00.000Z'),
-        updated_at: new Date('2026-05-10T00:00:00.000Z'),
-      },
-    ],
-  });
+  database.query = async (sql, params) => {
+    if (sql.includes('UPDATE users')) {
+      updateSql = sql;
+      updateParams = params;
+
+      return {
+        rows: [
+          {
+            failed_login_attempts: 1,
+            locked_at: null,
+          },
+        ],
+      };
+    }
+
+    return {
+      rows: [
+        {
+          id: '1',
+          name: 'Admin User',
+          email: 'admin@example.com',
+          password: await hashPassword('password123'),
+          role_id: '1',
+          branch_id: '2',
+          status: 'active',
+          failed_login_attempts: 0,
+          locked_at: null,
+          created_at: new Date('2026-05-10T00:00:00.000Z'),
+          updated_at: new Date('2026-05-10T00:00:00.000Z'),
+        },
+      ],
+    };
+  };
 
   await assert.rejects(
     () =>
@@ -175,6 +201,214 @@ test('loginUser rejects invalid credentials', {
       statusCode: 401,
     }
   );
+
+  assert.match(updateSql, /failed_login_attempts = failed_login_attempts \+ 1/);
+  assert.match(updateSql, /locked_at = CASE/);
+  assert.equal(updateParams[0], '1');
+  assert.equal(updateParams[1], 5);
+});
+
+test('loginUser locks an account after 5 consecutive failed attempts', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const authService = require('../src/services/authService');
+  const { hashPassword } = require('../src/utils/passwordHash');
+  const originalQuery = database.query;
+  const lockedAt = new Date('2026-05-10T01:00:00.000Z');
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql) => {
+    if (sql.includes('UPDATE users')) {
+      return {
+        rows: [
+          {
+            failed_login_attempts: 5,
+            locked_at: lockedAt,
+          },
+        ],
+      };
+    }
+
+    return {
+      rows: [
+        {
+          id: '1',
+          name: 'Admin User',
+          email: 'admin@example.com',
+          password: await hashPassword('password123'),
+          role_id: '1',
+          branch_id: '2',
+          status: 'active',
+          failed_login_attempts: 4,
+          locked_at: null,
+          created_at: new Date('2026-05-10T00:00:00.000Z'),
+          updated_at: new Date('2026-05-10T00:00:00.000Z'),
+        },
+      ],
+    };
+  };
+
+  await assert.rejects(
+    () =>
+      authService.loginUser({
+        email: 'admin@example.com',
+        password: 'wrong-password',
+      }),
+    {
+      message: 'User account is locked.',
+      statusCode: 423,
+    }
+  );
+});
+
+test('loginUser rejects locked accounts before checking credentials', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const authService = require('../src/services/authService');
+  const { hashPassword } = require('../src/utils/passwordHash');
+  const originalQuery = database.query;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql) => {
+    if (
+      sql.includes('UPDATE users') ||
+      sql.includes('INSERT INTO refresh_tokens')
+    ) {
+      throw new Error('Locked accounts should not be updated or issued tokens.');
+    }
+
+    return {
+      rows: [
+        {
+          id: '1',
+          name: 'Admin User',
+          email: 'admin@example.com',
+          password: await hashPassword('password123'),
+          role_id: '1',
+          branch_id: '2',
+          status: 'active',
+          failed_login_attempts: 5,
+          locked_at: new Date('2026-05-10T01:00:00.000Z'),
+          created_at: new Date('2026-05-10T00:00:00.000Z'),
+          updated_at: new Date('2026-05-10T00:00:00.000Z'),
+        },
+      ],
+    };
+  };
+
+  await assert.rejects(
+    () =>
+      authService.loginUser({
+        email: 'admin@example.com',
+        password: 'password123',
+      }),
+    {
+      message: 'User account is locked.',
+      statusCode: 423,
+    }
+  );
+});
+
+test('requestPasswordReset stores a hashed reset token and sends email', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const crypto = require('crypto');
+  const database = require('../src/config/database');
+  const emailService = require('../src/services/emailService');
+  const authService = require('../src/services/authService');
+  const originalQuery = database.query;
+  const originalSendPasswordResetEmail = emailService.sendPasswordResetEmail;
+  let selectParams;
+  let insertParams;
+  let emailPayload;
+
+  t.after(() => {
+    database.query = originalQuery;
+    emailService.sendPasswordResetEmail = originalSendPasswordResetEmail;
+  });
+
+  database.query = async (sql, params) => {
+    if (sql.includes('INSERT INTO password_reset_tokens')) {
+      insertParams = params;
+
+      return { rows: [] };
+    }
+
+    selectParams = params;
+
+    return {
+      rows: [
+        {
+          id: '1',
+          email: 'admin@example.com',
+        },
+      ],
+    };
+  };
+
+  emailService.sendPasswordResetEmail = async (payload) => {
+    emailPayload = payload;
+  };
+
+  await authService.requestPasswordReset({
+    email: 'ADMIN@EXAMPLE.COM ',
+  });
+
+  assert.equal(selectParams[0], 'admin@example.com');
+  assert.equal(insertParams[0], '1');
+  assert.match(insertParams[1], /^[a-f0-9]{64}$/);
+  assert.equal(insertParams[2] instanceof Date, true);
+  assert.equal(emailPayload.to, 'admin@example.com');
+  assert.match(emailPayload.token, /^[a-f0-9]{64}$/);
+  assert.equal(
+    insertParams[1],
+    crypto.createHash('sha256').update(emailPayload.token).digest('hex')
+  );
+  assert.equal(emailPayload.expiresInMinutes, 60);
+});
+
+test('requestPasswordReset does not reveal missing accounts or send email', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const emailService = require('../src/services/emailService');
+  const authService = require('../src/services/authService');
+  const originalQuery = database.query;
+  const originalSendPasswordResetEmail = emailService.sendPasswordResetEmail;
+  let queryCount = 0;
+
+  t.after(() => {
+    database.query = originalQuery;
+    emailService.sendPasswordResetEmail = originalSendPasswordResetEmail;
+  });
+
+  database.query = async (sql) => {
+    queryCount += 1;
+
+    if (sql.includes('INSERT INTO password_reset_tokens')) {
+      throw new Error('Missing accounts should not get reset tokens.');
+    }
+
+    return { rows: [] };
+  };
+
+  emailService.sendPasswordResetEmail = async () => {
+    throw new Error('Missing accounts should not receive email.');
+  };
+
+  await authService.requestPasswordReset({
+    email: 'missing@example.com',
+  });
+
+  assert.equal(queryCount, 1);
 });
 
 test('refreshAccessToken validates stored refresh token and returns a new access token', {

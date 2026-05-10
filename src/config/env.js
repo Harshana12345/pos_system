@@ -25,6 +25,18 @@ const env = {
     accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
   },
+  passwordReset: {
+    expiresInMinutes: Number(process.env.PASSWORD_RESET_EXPIRES_IN_MINUTES || 60),
+    resetUrl: process.env.PASSWORD_RESET_URL || 'http://localhost:5173/reset-password',
+  },
+  email: {
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_SECURE === 'true',
+    user: process.env.SMTP_USER,
+    password: process.env.SMTP_PASSWORD,
+    from: process.env.EMAIL_FROM || 'POS System <no-reply@pos-system.local>',
+  },
 };
 
 module.exports = { env };

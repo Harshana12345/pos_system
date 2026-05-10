@@ -3,9 +3,12 @@ const crypto = require('crypto');
 const database = require('../config/database');
 const { env } = require('../config/env');
 const User = require('../models/User');
+const emailService = require('./emailService');
 const HttpError = require('../utils/httpError');
 const { signJwt, verifyJwt } = require('../utils/jwt');
 const { hashPassword, verifyPassword } = require('../utils/passwordHash');
+
+const MAX_FAILED_LOGIN_ATTEMPTS = 5;
 
 function mapUserRow(row) {
   return new User({
@@ -34,6 +37,43 @@ async function storeRefreshToken({ userId, token, expiresIn }) {
   );
 
   return expiresAt;
+}
+
+async function storePasswordResetToken({ userId, token, expiresAt }) {
+  await database.query(
+    `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+     VALUES ($1, $2, $3)`,
+    [userId, hashToken(token), expiresAt]
+  );
+}
+
+async function recordFailedLoginAttempt(userId) {
+  const result = await database.query(
+    `UPDATE users
+     SET failed_login_attempts = failed_login_attempts + 1,
+         locked_at = CASE
+           WHEN failed_login_attempts + 1 >= $2 THEN COALESCE(locked_at, CURRENT_TIMESTAMP)
+           ELSE locked_at
+         END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+     RETURNING failed_login_attempts, locked_at`,
+    [userId, MAX_FAILED_LOGIN_ATTEMPTS]
+  );
+
+  return result.rows[0];
+}
+
+async function resetFailedLoginAttempts(userId) {
+  await database.query(
+    `UPDATE users
+     SET failed_login_attempts = 0,
+         locked_at = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+       AND (failed_login_attempts <> 0 OR locked_at IS NOT NULL)`,
+    [userId]
+  );
 }
 
 function createAccessToken(user) {
@@ -74,7 +114,8 @@ async function registerUser({ name, email, password, roleId, branchId }) {
 
 async function loginUser({ email, password }) {
   const result = await database.query(
-    `SELECT id, name, email, password, role_id, branch_id, status, created_at, updated_at
+    `SELECT id, name, email, password, role_id, branch_id, status,
+            failed_login_attempts, locked_at, created_at, updated_at
      FROM users
      WHERE email = $1
      LIMIT 1`,
@@ -82,13 +123,29 @@ async function loginUser({ email, password }) {
   );
   const row = result.rows[0];
 
-  if (!row || !(await verifyPassword(password, row.password))) {
+  if (!row) {
+    throw new HttpError(401, 'Invalid email or password.');
+  }
+
+  if (row.locked_at) {
+    throw new HttpError(423, 'User account is locked.');
+  }
+
+  if (!(await verifyPassword(password, row.password))) {
+    const failedLogin = await recordFailedLoginAttempt(row.id);
+
+    if (failedLogin?.locked_at) {
+      throw new HttpError(423, 'User account is locked.');
+    }
+
     throw new HttpError(401, 'Invalid email or password.');
   }
 
   if (row.status !== 'active') {
     throw new HttpError(403, 'User account is inactive.');
   }
+
+  await resetFailedLoginAttempts(row.id);
 
   const user = mapUserRow(row);
   const { token, expiresIn } = createAccessToken(user);
@@ -118,6 +175,39 @@ async function loginUser({ email, password }) {
     refreshTokenExpiresAt,
     user,
   };
+}
+
+async function requestPasswordReset({ email }) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const result = await database.query(
+    `SELECT id, email
+     FROM users
+     WHERE email = $1
+       AND status = 'active'
+     LIMIT 1`,
+    [normalizedEmail]
+  );
+  const row = result.rows[0];
+
+  if (!row) {
+    return;
+  }
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresInMinutes = env.passwordReset.expiresInMinutes;
+  const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
+
+  await storePasswordResetToken({
+    userId: row.id,
+    token,
+    expiresAt,
+  });
+
+  await emailService.sendPasswordResetEmail({
+    to: row.email,
+    token,
+    expiresInMinutes,
+  });
 }
 
 async function refreshAccessToken(refreshToken) {
@@ -203,4 +293,10 @@ async function logoutUser(refreshToken) {
   }
 }
 
-module.exports = { loginUser, logoutUser, refreshAccessToken, registerUser };
+module.exports = {
+  loginUser,
+  logoutUser,
+  refreshAccessToken,
+  registerUser,
+  requestPasswordReset,
+};
