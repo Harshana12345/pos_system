@@ -26,6 +26,12 @@ function isNonNegativeNumber(value) {
   return Number.isFinite(normalized) && normalized >= 0;
 }
 
+function isPositiveNumber(value) {
+  const normalized = Number(value);
+
+  return Number.isFinite(normalized) && normalized > 0;
+}
+
 function validateCustomerId(id) {
   if (!isPositiveInteger(id)) {
     return ['Customer ID must be a positive integer.'];
@@ -109,7 +115,26 @@ function validateLoyaltyPointsPayload(payload) {
   return errors;
 }
 
+function validateCreditBalancePayload(payload) {
+  const errors = [];
+
+  if (!isPlainObject(payload)) {
+    return ['Credit balance adjustment is required.'];
+  }
+
+  if (!['add', 'subtract'].includes(payload.action)) {
+    errors.push('Credit balance action must be add or subtract.');
+  }
+
+  if (!isPositiveNumber(payload.amount)) {
+    errors.push('Credit balance amount must be a positive number.');
+  }
+
+  return errors;
+}
+
 module.exports = {
+  validateCreditBalancePayload,
   validateCustomerId,
   validateCustomerPayload,
   validateLoyaltyPointsPayload,

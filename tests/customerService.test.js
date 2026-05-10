@@ -105,6 +105,67 @@ test('findById returns a customer or rejects missing customers', {
   assert.equal(customer.id, '1');
 });
 
+test('findCreditBalanceById returns a customer credit balance', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const customerService = require('../src/services/customerService');
+  const originalQuery = database.query;
+  let selectSql;
+  let selectParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    selectSql = sql;
+    selectParams = params;
+
+    return {
+      rowCount: 1,
+      rows: [
+        {
+          id: '1',
+          credit_balance: '25.50',
+        },
+      ],
+    };
+  };
+
+  const creditBalance = await customerService.findCreditBalanceById('1');
+
+  assert.match(selectSql, /credit_balance/);
+  assert.match(selectSql, /FROM customers/);
+  assert.deepEqual(selectParams, [1]);
+  assert.deepEqual(creditBalance, {
+    customerId: '1',
+    creditBalance: 25.5,
+  });
+});
+
+test('findCreditBalanceById rejects missing customers', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const customerService = require('../src/services/customerService');
+  const originalQuery = database.query;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async () => ({
+    rowCount: 0,
+    rows: [],
+  });
+
+  await assert.rejects(() => customerService.findCreditBalanceById('99'), {
+    message: 'Customer not found.',
+    statusCode: 404,
+  });
+});
+
 test('findPurchaseHistoryById returns customer sales with items', {
   skip: !dependenciesAvailable,
 }, async (t) => {
@@ -464,6 +525,129 @@ test('adjustLoyaltyPoints rejects insufficient points when redeeming', {
   );
 
   assert.match(queries[0].sql, /loyalty_points >= \$2/);
+  assert.deepEqual(queries[0].params, [1, 50]);
+  assert.deepEqual(queries[1].params, [1]);
+});
+
+test('adjustCreditBalance adds and subtracts credit balance', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const customerService = require('../src/services/customerService');
+  const originalQuery = database.query;
+  const queries = [];
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    queries.push({ sql, params });
+
+    return {
+      rowCount: 1,
+      rows: [
+        {
+          id: '1',
+          credit_balance: /credit_balance \+ \$2/.test(sql) ? '35.75' : '30.25',
+        },
+      ],
+    };
+  };
+
+  const addedBalance = await customerService.adjustCreditBalance('1', {
+    action: 'add',
+    amount: '10.50',
+  });
+  const subtractedBalance = await customerService.adjustCreditBalance('1', {
+    action: 'subtract',
+    amount: 5,
+  });
+
+  assert.match(queries[0].sql, /credit_balance = credit_balance \+ \$2/);
+  assert.doesNotMatch(queries[0].sql, /credit_balance >= \$2/);
+  assert.deepEqual(queries[0].params, [1, 10.5]);
+  assert.match(queries[1].sql, /credit_balance = credit_balance - \$2/);
+  assert.match(queries[1].sql, /credit_balance >= \$2/);
+  assert.deepEqual(queries[1].params, [1, 5]);
+  assert.deepEqual(addedBalance, {
+    customerId: '1',
+    creditBalance: 35.75,
+  });
+  assert.deepEqual(subtractedBalance, {
+    customerId: '1',
+    creditBalance: 30.25,
+  });
+});
+
+test('adjustCreditBalance rejects missing customers', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const customerService = require('../src/services/customerService');
+  const originalQuery = database.query;
+  const queries = [];
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    queries.push({ sql, params });
+
+    return { rowCount: 0, rows: [] };
+  };
+
+  await assert.rejects(
+    () =>
+      customerService.adjustCreditBalance('99', {
+        action: 'add',
+        amount: 10,
+      }),
+    {
+      message: 'Customer not found.',
+      statusCode: 404,
+    }
+  );
+
+  assert.match(queries[0].sql, /UPDATE customers/);
+  assert.match(queries[1].sql, /FROM customers/);
+  assert.deepEqual(queries[1].params, [99]);
+});
+
+test('adjustCreditBalance rejects insufficient balance when subtracting', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const customerService = require('../src/services/customerService');
+  const originalQuery = database.query;
+  const queries = [];
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    queries.push({ sql, params });
+
+    return queries.length === 1
+      ? { rowCount: 0, rows: [] }
+      : { rowCount: 1, rows: [{ id: '1' }] };
+  };
+
+  await assert.rejects(
+    () =>
+      customerService.adjustCreditBalance('1', {
+        action: 'subtract',
+        amount: 50,
+      }),
+    {
+      message: 'Insufficient credit balance.',
+      statusCode: 400,
+    }
+  );
+
+  assert.match(queries[0].sql, /credit_balance >= \$2/);
   assert.deepEqual(queries[0].params, [1, 50]);
   assert.deepEqual(queries[1].params, [1]);
 });

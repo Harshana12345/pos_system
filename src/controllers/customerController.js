@@ -1,6 +1,7 @@
 const customerService = require('../services/customerService');
 const HttpError = require('../utils/httpError');
 const {
+  validateCreditBalancePayload,
   validateCustomerId,
   validateCustomerPayload,
   validateLoyaltyPointsPayload,
@@ -50,6 +51,25 @@ async function getCustomerPurchaseHistory(req, res, next) {
 
     res.status(200).json({
       data: sales,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getCustomerCreditBalance(req, res, next) {
+  const errors = validateCustomerId(req.params.id);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const creditBalance = await customerService.findCreditBalanceById(req.params.id);
+
+    res.status(200).json({
+      data: creditBalance,
     });
   } catch (error) {
     next(error);
@@ -122,6 +142,31 @@ async function adjustCustomerLoyaltyPoints(req, res, next) {
   }
 }
 
+async function adjustCustomerCreditBalance(req, res, next) {
+  const errors = [
+    ...validateCustomerId(req.params.id),
+    ...validateCreditBalancePayload(req.body),
+  ];
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const creditBalance = await customerService.adjustCreditBalance(
+      req.params.id,
+      req.body
+    );
+
+    res.status(200).json({
+      data: creditBalance,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function deleteCustomer(req, res, next) {
   const errors = validateCustomerId(req.params.id);
 
@@ -140,10 +185,12 @@ async function deleteCustomer(req, res, next) {
 }
 
 module.exports = {
+  adjustCustomerCreditBalance,
   adjustCustomerLoyaltyPoints,
   createCustomer,
   deleteCustomer,
   getCustomer,
+  getCustomerCreditBalance,
   getCustomerPurchaseHistory,
   listCustomers,
   updateCustomer,

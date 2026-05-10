@@ -53,6 +53,13 @@ function mapCustomerRow(row) {
   });
 }
 
+function mapCreditBalanceRow(row) {
+  return {
+    customerId: row.id,
+    creditBalance: Number(row.credit_balance),
+  };
+}
+
 function roundCurrency(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
@@ -133,6 +140,22 @@ async function findById(id) {
   }
 
   return mapCustomerRow(result.rows[0]);
+}
+
+async function findCreditBalanceById(id) {
+  const result = await database.query(
+    `SELECT id,
+            credit_balance
+     FROM customers
+     WHERE id = $1`,
+    [Number(id)]
+  );
+
+  if (result.rowCount === 0) {
+    throw new HttpError(404, 'Customer not found.');
+  }
+
+  return mapCreditBalanceRow(result.rows[0]);
 }
 
 async function findPurchaseHistoryById(id) {
@@ -366,6 +389,50 @@ async function adjustLoyaltyPoints(id, { action, points }) {
   throw new HttpError(400, 'Insufficient loyalty points.');
 }
 
+async function adjustCreditBalance(id, { action, amount }) {
+  if (!['add', 'subtract'].includes(action)) {
+    throw new HttpError(400, 'Credit balance action must be add or subtract.');
+  }
+
+  const customerId = Number(id);
+  const adjustmentAmount = Number(amount);
+
+  if (!Number.isFinite(adjustmentAmount) || adjustmentAmount <= 0) {
+    throw new HttpError(400, 'Credit balance amount must be a positive number.');
+  }
+
+  const operator = action === 'add' ? '+' : '-';
+  const condition = action === 'subtract' ? 'AND credit_balance >= $2' : '';
+
+  const result = await database.query(
+    `UPDATE customers
+     SET credit_balance = credit_balance ${operator} $2,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+       ${condition}
+     RETURNING id,
+               credit_balance`,
+    [customerId, adjustmentAmount]
+  );
+
+  if (result.rowCount > 0) {
+    return mapCreditBalanceRow(result.rows[0]);
+  }
+
+  const customerResult = await database.query(
+    `SELECT id
+     FROM customers
+     WHERE id = $1`,
+    [customerId]
+  );
+
+  if (customerResult.rowCount === 0) {
+    throw new HttpError(404, 'Customer not found.');
+  }
+
+  throw new HttpError(400, 'Insufficient credit balance.');
+}
+
 async function deleteCustomer(id) {
   const result = await database.query(
     `DELETE FROM customers
@@ -380,12 +447,15 @@ async function deleteCustomer(id) {
 }
 
 module.exports = {
+  adjustCreditBalance,
   adjustLoyaltyPoints,
   createCustomer,
   deleteCustomer,
   findAll,
+  findCreditBalanceById,
   findById,
   findPurchaseHistoryById,
+  mapCreditBalanceRow,
   mapCustomerRow,
   mapSaleItemRow,
   mapSaleRow,

@@ -2,6 +2,7 @@ const assert = require('node:assert');
 const test = require('node:test');
 
 const {
+  validateCreditBalancePayload,
   validateCustomerId,
   validateCustomerPayload,
   validateLoyaltyPointsPayload,
@@ -66,4 +67,26 @@ test('loyalty points payload validation rejects invalid adjustments', () => {
 
   assert.match(errors.join(' '), /Loyalty points action must be add or redeem/);
   assert.match(errors.join(' '), /Loyalty points must be a positive integer/);
+});
+
+test('credit balance payload validation accepts add and subtract actions', () => {
+  assert.deepEqual(validateCreditBalancePayload({ action: 'add', amount: 10 }), []);
+  assert.deepEqual(
+    validateCreditBalancePayload({ action: 'subtract', amount: '5.50' }),
+    []
+  );
+});
+
+test('credit balance payload validation rejects invalid adjustments', () => {
+  assert.deepEqual(validateCreditBalancePayload(null), [
+    'Credit balance adjustment is required.',
+  ]);
+
+  const errors = validateCreditBalancePayload({
+    action: 'replace',
+    amount: 0,
+  });
+
+  assert.match(errors.join(' '), /Credit balance action must be add or subtract/);
+  assert.match(errors.join(' '), /Credit balance amount must be a positive number/);
 });
