@@ -26,6 +26,14 @@ docker compose up --build
 
 The Compose setup uses named volumes for `node_modules` and PostgreSQL data.
 
+## Database
+
+The backend uses `pg` with a shared connection pool from `src/config/database.js`.
+Set `DATABASE_URL` to configure the pool with a connection string, or use the
+individual `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` values.
+Optional pool settings are available through `DB_POOL_MAX`,
+`DB_IDLE_TIMEOUT_MS`, and `DB_CONNECTION_TIMEOUT_MS`.
+
 ## Structure
 
 ```text
