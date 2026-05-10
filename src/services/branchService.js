@@ -13,6 +13,7 @@ function mapBranchRow(row) {
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    deletedAt: row.deleted_at,
   });
 }
 
@@ -26,7 +27,10 @@ function normalizeNullableString(value) {
   return normalized.length > 0 ? normalized : null;
 }
 
-async function updateBranch(id, { name, address, contact, taxInfo, tax_info, currency, status }) {
+async function updateBranch(
+  id,
+  { name, address, contact, taxInfo, tax_info, currency, status },
+) {
   const result = await database.query(
     `UPDATE branches
      SET name = $2,
@@ -37,7 +41,8 @@ async function updateBranch(id, { name, address, contact, taxInfo, tax_info, cur
          status = $7,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = $1
-     RETURNING id, name, address, contact, tax_info, currency, status, created_at, updated_at`,
+       AND deleted_at IS NULL
+     RETURNING id, name, address, contact, tax_info, currency, status, created_at, updated_at, deleted_at`,
     [
       Number(id),
       name.trim(),
@@ -56,4 +61,20 @@ async function updateBranch(id, { name, address, contact, taxInfo, tax_info, cur
   return mapBranchRow(result.rows[0]);
 }
 
-module.exports = { mapBranchRow, updateBranch };
+async function deleteBranch(id) {
+  const result = await database.query(
+    `UPDATE branches
+     SET deleted_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+       AND deleted_at IS NULL
+     RETURNING id`,
+    [Number(id)]
+  );
+
+  if (result.rowCount === 0) {
+    throw new HttpError(404, 'Branch not found.');
+  }
+}
+
+module.exports = { deleteBranch, mapBranchRow, updateBranch };

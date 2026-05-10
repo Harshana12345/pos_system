@@ -21,4 +21,21 @@ async function updateBranch(req, res, next) {
   }
 }
 
-module.exports = { updateBranch };
+async function deleteBranch(req, res, next) {
+  const errors = validateBranchId(req.params.id);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    await branchService.deleteBranch(req.params.id);
+
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = { deleteBranch, updateBranch };
