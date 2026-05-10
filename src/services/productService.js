@@ -189,6 +189,10 @@ async function findAll() {
   return result.rows.map((row) => mapProductRow(row));
 }
 
+async function findById(id) {
+  return findProductDetailsById(database, id);
+}
+
 async function replaceProductVariants(client, productId, variants) {
   await client.query('DELETE FROM product_variants WHERE product_id = $1', [Number(productId)]);
 
@@ -387,6 +391,7 @@ async function deleteProduct(id) {
 module.exports = {
   deleteProduct,
   findAll,
+  findById,
   mapProductImageRow,
   mapProductRow,
   mapProductVariantRow,

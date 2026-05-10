@@ -17,6 +17,25 @@ async function listProducts(_req, res, next) {
   }
 }
 
+async function getProduct(req, res, next) {
+  const errors = validateProductId(req.params.id);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    const product = await productService.findById(req.params.id);
+
+    res.status(200).json({
+      data: product,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function updateProduct(req, res, next) {
   const errors = [
     ...validateProductId(req.params.id),
@@ -71,4 +90,4 @@ function uploadProductImages(req, res) {
   });
 }
 
-module.exports = { deleteProduct, listProducts, updateProduct, uploadProductImages };
+module.exports = { deleteProduct, getProduct, listProducts, updateProduct, uploadProductImages };
