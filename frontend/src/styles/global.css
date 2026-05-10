@@ -145,6 +145,12 @@ h1 {
   gap: 14px;
 }
 
+.customer-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(132px, 1fr));
+  gap: 14px;
+}
+
 .table-panel {
   border: 1px solid #d8dee8;
   border-radius: 8px;
@@ -213,6 +219,7 @@ h1 {
 }
 
 .supplier-form,
+.customer-form,
 .supplier-payment-form,
 .purchase-order-form {
   display: grid;
@@ -231,6 +238,7 @@ h1 {
 .catalog-form-wide,
 .catalog-description,
 .supplier-form-wide,
+.customer-form-wide,
 .purchase-form-wide,
 .stock-transfer-wide,
 .stock-transfer-reference {
@@ -489,6 +497,14 @@ h1 {
 }
 
 .supplier-filters {
+  display: grid;
+  width: min(540px, 100%);
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 0.7fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.customer-filters {
   display: grid;
   width: min(540px, 100%);
   grid-template-columns: minmax(220px, 1fr) minmax(160px, 0.7fr);
@@ -877,6 +893,10 @@ h1 {
 
 .supplier-table {
   min-width: 1040px;
+}
+
+.customer-table {
+  min-width: 1100px;
 }
 
 .supplier-history-table {
@@ -1302,8 +1322,10 @@ h1 {
   .product-stats,
   .inventory-stats,
   .supplier-stats,
+  .customer-stats,
   .inventory-filters,
   .supplier-filters,
+  .customer-filters,
   .product-filters {
     grid-template-columns: 1fr;
   }
@@ -1311,6 +1333,7 @@ h1 {
   .employee-form,
   .catalog-form,
   .supplier-form,
+  .customer-form,
   .supplier-payment-form,
   .purchase-order-form,
   .stock-transfer-form,

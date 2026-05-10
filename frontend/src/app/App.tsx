@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { BrandListPage } from '@/pages/BrandListPage';
 import { CategoryListPage } from '@/pages/CategoryListPage';
+import { CustomerListPage } from '@/pages/CustomerListPage';
 import { EmployeeListPage } from '@/pages/EmployeeListPage';
 import { InventoryListPage } from '@/pages/InventoryListPage';
 import { LoginPage } from '@/pages/LoginPage';
@@ -20,6 +21,7 @@ type AppView =
   | 'categories'
   | 'brands'
   | 'suppliers'
+  | 'customers'
   | 'employees';
 
 const NAV_ITEMS: { label: string; value: AppView }[] = [
@@ -30,6 +32,7 @@ const NAV_ITEMS: { label: string; value: AppView }[] = [
   { label: 'Categories', value: 'categories' },
   { label: 'Brands', value: 'brands' },
   { label: 'Suppliers', value: 'suppliers' },
+  { label: 'Customers', value: 'customers' },
   { label: 'Employees', value: 'employees' },
 ];
 
@@ -96,6 +99,15 @@ export function App() {
           onOpenSupplier={setSelectedSupplier}
           userName={session.user.name}
         />
+      </>
+    );
+  }
+
+  if (activeView === 'customers') {
+    return (
+      <>
+        {nav}
+        <CustomerListPage accessToken={session.accessToken} userName={session.user.name} />
       </>
     );
   }
