@@ -39,4 +39,20 @@ function validateRegisterPayload(payload) {
   return errors;
 }
 
-module.exports = { MIN_PASSWORD_LENGTH, validateRegisterPayload };
+function validateLoginPayload(payload) {
+  const errors = [];
+
+  if (!hasValue(payload.email)) {
+    errors.push('Email is required.');
+  } else if (!EMAIL_PATTERN.test(String(payload.email).trim())) {
+    errors.push('Email must be valid.');
+  }
+
+  if (!hasValue(payload.password)) {
+    errors.push('Password is required.');
+  }
+
+  return errors;
+}
+
+module.exports = { MIN_PASSWORD_LENGTH, validateLoginPayload, validateRegisterPayload };

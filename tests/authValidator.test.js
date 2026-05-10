@@ -1,7 +1,7 @@
 const assert = require('node:assert');
 const test = require('node:test');
 
-const { validateRegisterPayload } = require('../src/validators/authValidator');
+const { validateLoginPayload, validateRegisterPayload } = require('../src/validators/authValidator');
 
 test('register payload validation requires expected fields', () => {
   const errors = validateRegisterPayload({});
@@ -22,6 +22,21 @@ test('register payload validation accepts a valid payload', () => {
     password: 'password123',
     roleId: 1,
     branchId: 1,
+  });
+
+  assert.deepEqual(errors, []);
+});
+
+test('login payload validation requires expected fields', () => {
+  const errors = validateLoginPayload({});
+
+  assert.deepEqual(errors, ['Email is required.', 'Password is required.']);
+});
+
+test('login payload validation accepts a valid payload', () => {
+  const errors = validateLoginPayload({
+    email: 'admin@example.com',
+    password: 'password123',
   });
 
   assert.deepEqual(errors, []);

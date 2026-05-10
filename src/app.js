@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 
 const { env } = require('./config/env');
+const authRoutes = require('./routes/authRoutes');
 const routes = require('./routes');
 const { notFoundHandler } = require('./middleware/notFoundHandler');
 const { errorHandler } = require('./middleware/errorHandler');
@@ -17,6 +18,10 @@ app.use(express.urlencoded({ extended: true }));
 
 if (env.nodeEnv !== 'test') {
   app.use(morgan('dev'));
+}
+
+if (env.apiPrefix !== '/api') {
+  app.use('/api/auth', authRoutes);
 }
 
 app.use(env.apiPrefix, routes);
@@ -33,4 +38,3 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 module.exports = app;
-

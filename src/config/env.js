@@ -15,6 +15,10 @@ const env = {
     idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS || 30000),
     connectionTimeoutMillis: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 2000),
   },
+  jwt: {
+    accessSecret: process.env.JWT_ACCESS_SECRET || 'development-access-token-secret',
+    accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
+  },
 };
 
 module.exports = { env };

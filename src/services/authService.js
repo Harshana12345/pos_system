@@ -1,7 +1,9 @@
 const database = require('../config/database');
+const { env } = require('../config/env');
 const User = require('../models/User');
 const HttpError = require('../utils/httpError');
-const { hashPassword } = require('../utils/passwordHash');
+const { signJwt } = require('../utils/jwt');
+const { hashPassword, verifyPassword } = require('../utils/passwordHash');
 
 function mapUserRow(row) {
   return new User({
@@ -37,4 +39,44 @@ async function registerUser({ name, email, password, roleId, branchId }) {
   }
 }
 
-module.exports = { registerUser };
+async function loginUser({ email, password }) {
+  const result = await database.query(
+    `SELECT id, name, email, password, role_id, branch_id, status, created_at, updated_at
+     FROM users
+     WHERE email = $1
+     LIMIT 1`,
+    [email.trim().toLowerCase()]
+  );
+  const row = result.rows[0];
+
+  if (!row || !(await verifyPassword(password, row.password))) {
+    throw new HttpError(401, 'Invalid email or password.');
+  }
+
+  if (row.status !== 'active') {
+    throw new HttpError(403, 'User account is inactive.');
+  }
+
+  const user = mapUserRow(row);
+  const { token, expiresIn } = signJwt(
+    {
+      sub: String(user.id),
+      email: user.email,
+      roleId: user.roleId,
+      branchId: user.branchId,
+    },
+    {
+      secret: env.jwt.accessSecret,
+      expiresIn: env.jwt.accessExpiresIn,
+    }
+  );
+
+  return {
+    accessToken: token,
+    tokenType: 'Bearer',
+    expiresIn,
+    user,
+  };
+}
+
+module.exports = { loginUser, registerUser };
