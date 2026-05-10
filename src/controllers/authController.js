@@ -2,6 +2,7 @@ const authService = require('../services/authService');
 const HttpError = require('../utils/httpError');
 const {
   validateLoginPayload,
+  validateLogoutPayload,
   validateRefreshPayload,
   validateRegisterPayload,
 } = require('../validators/authValidator');
@@ -63,4 +64,21 @@ async function refresh(req, res, next) {
   }
 }
 
-module.exports = { login, refresh, register };
+async function logout(req, res, next) {
+  const errors = validateLogoutPayload(req.body);
+
+  if (errors.length > 0) {
+    next(new HttpError(400, errors.join(' ')));
+    return;
+  }
+
+  try {
+    await authService.logoutUser(req.body.refreshToken);
+
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = { login, logout, refresh, register };

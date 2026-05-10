@@ -293,3 +293,103 @@ test('refreshAccessToken rejects refresh tokens missing from storage', {
     statusCode: 401,
   });
 });
+
+test('logoutUser revokes a stored refresh token', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const crypto = require('crypto');
+  const database = require('../src/config/database');
+  const { env } = require('../src/config/env');
+  const authService = require('../src/services/authService');
+  const { signJwt } = require('../src/utils/jwt');
+  const originalQuery = database.query;
+  const { token: refreshToken } = signJwt(
+    {
+      sub: '1',
+      type: 'refresh',
+      jti: crypto.randomUUID(),
+    },
+    {
+      secret: env.jwt.refreshSecret,
+      expiresIn: env.jwt.refreshExpiresIn,
+    }
+  );
+  const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+  let updateSql;
+  let updateParams;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async (sql, params) => {
+    updateSql = sql;
+    updateParams = params;
+
+    return { rowCount: 1, rows: [] };
+  };
+
+  await authService.logoutUser(refreshToken);
+
+  assert.match(updateSql, /UPDATE refresh_tokens/);
+  assert.match(updateSql, /revoked_at = CURRENT_TIMESTAMP/);
+  assert.equal(updateParams[0], refreshTokenHash);
+  assert.equal(updateParams[1], '1');
+});
+
+test('logoutUser rejects invalid refresh tokens', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const authService = require('../src/services/authService');
+  const originalQuery = database.query;
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async () => {
+    throw new Error('Database should not be queried for an invalid JWT.');
+  };
+
+  await assert.rejects(() => authService.logoutUser('not-a-token'), {
+    message: 'Invalid refresh token.',
+    statusCode: 401,
+  });
+});
+
+test('logoutUser rejects refresh tokens missing from storage', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const crypto = require('crypto');
+  const database = require('../src/config/database');
+  const { env } = require('../src/config/env');
+  const authService = require('../src/services/authService');
+  const { signJwt } = require('../src/utils/jwt');
+  const originalQuery = database.query;
+  const { token: refreshToken } = signJwt(
+    {
+      sub: '1',
+      type: 'refresh',
+      jti: crypto.randomUUID(),
+    },
+    {
+      secret: env.jwt.refreshSecret,
+      expiresIn: env.jwt.refreshExpiresIn,
+    }
+  );
+
+  t.after(() => {
+    database.query = originalQuery;
+  });
+
+  database.query = async () => ({
+    rowCount: 0,
+    rows: [],
+  });
+
+  await assert.rejects(() => authService.logoutUser(refreshToken), {
+    message: 'Invalid refresh token.',
+    statusCode: 401,
+  });
+});

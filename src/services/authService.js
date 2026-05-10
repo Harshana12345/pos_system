@@ -170,4 +170,37 @@ async function refreshAccessToken(refreshToken) {
   };
 }
 
-module.exports = { loginUser, refreshAccessToken, registerUser };
+async function logoutUser(refreshToken) {
+  let payload;
+
+  try {
+    payload = verifyJwt(refreshToken, { secret: env.jwt.refreshSecret });
+  } catch {
+    throw new HttpError(401, 'Invalid refresh token.');
+  }
+
+  if (
+    payload.type !== 'refresh' ||
+    !Number.isInteger(Number(payload.sub)) ||
+    Number(payload.sub) <= 0
+  ) {
+    throw new HttpError(401, 'Invalid refresh token.');
+  }
+
+  const result = await database.query(
+    `UPDATE refresh_tokens
+     SET revoked_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE token_hash = $1
+       AND user_id = $2
+       AND revoked_at IS NULL
+       AND expires_at > CURRENT_TIMESTAMP`,
+    [hashToken(refreshToken), payload.sub]
+  );
+
+  if (result.rowCount === 0) {
+    throw new HttpError(401, 'Invalid refresh token.');
+  }
+}
+
+module.exports = { loginUser, logoutUser, refreshAccessToken, registerUser };

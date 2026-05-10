@@ -65,9 +65,14 @@ function validateRefreshPayload(payload) {
   return errors;
 }
 
+function validateLogoutPayload(payload) {
+  return validateRefreshPayload(payload);
+}
+
 module.exports = {
   MIN_PASSWORD_LENGTH,
   validateLoginPayload,
+  validateLogoutPayload,
   validateRefreshPayload,
   validateRegisterPayload,
 };

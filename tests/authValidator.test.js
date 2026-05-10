@@ -3,6 +3,7 @@ const test = require('node:test');
 
 const {
   validateLoginPayload,
+  validateLogoutPayload,
   validateRefreshPayload,
   validateRegisterPayload,
 } = require('../src/validators/authValidator');
@@ -54,6 +55,20 @@ test('refresh payload validation requires refresh token', () => {
 
 test('refresh payload validation accepts a refresh token', () => {
   const errors = validateRefreshPayload({
+    refreshToken: 'refresh-token',
+  });
+
+  assert.deepEqual(errors, []);
+});
+
+test('logout payload validation requires refresh token', () => {
+  const errors = validateLogoutPayload({});
+
+  assert.deepEqual(errors, ['Refresh token is required.']);
+});
+
+test('logout payload validation accepts a refresh token', () => {
+  const errors = validateLogoutPayload({
     refreshToken: 'refresh-token',
   });
 
