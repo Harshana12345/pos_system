@@ -9,7 +9,7 @@ try {
   dependenciesAvailable = false;
 }
 
-test('purchase routes register POST /', {
+test('purchase routes register POST / and PUT /:id/approve', {
   skip: !dependenciesAvailable,
 }, () => {
   const purchaseRoutes = require('../src/routes/purchaseRoutes');
@@ -17,6 +17,11 @@ test('purchase routes register POST /', {
   const hasCreateRoute = purchaseRoutes.stack.some(
     (layer) => layer.route?.path === '/' && layer.route.methods.post === true
   );
+  const hasApproveRoute = purchaseRoutes.stack.some(
+    (layer) =>
+      layer.route?.path === '/:id/approve' && layer.route.methods.put === true
+  );
 
   assert.equal(hasCreateRoute, true);
+  assert.equal(hasApproveRoute, true);
 });

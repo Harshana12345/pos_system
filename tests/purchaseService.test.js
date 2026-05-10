@@ -165,3 +165,136 @@ test('createPurchaseOrder rolls back and maps missing product references', {
 
   assert.equal(queries.at(-1).sql, 'ROLLBACK');
 });
+
+test('approvePurchaseOrder approves a pending order in a transaction', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const purchaseService = require('../src/services/purchaseService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/FROM purchase_orders/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: params[0],
+              supplier_id: '1',
+              branch_id: '2',
+              status: 'draft',
+              total_amount: '10.00',
+              notes: null,
+              created_by: '42',
+              created_at: new Date('2026-05-10T00:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/UPDATE purchase_orders/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: params[0],
+              supplier_id: '1',
+              branch_id: '2',
+              status: 'ordered',
+              total_amount: '10.00',
+              notes: null,
+              created_by: '42',
+              created_at: new Date('2026-05-10T00:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/FROM purchase_order_items/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '80',
+              purchase_order_id: params[0],
+              product_id: '10',
+              quantity: '2',
+              cost_price: '5.00',
+            },
+          ],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  const purchase = await purchaseService.approvePurchaseOrder(50);
+
+  assert.deepEqual(
+    queries.map(({ sql }) => sql),
+    ['BEGIN', queries[1].sql, queries[2].sql, queries[3].sql, 'COMMIT']
+  );
+  assert.match(queries[1].sql, /FOR UPDATE/);
+  assert.match(queries[2].sql, /SET status = 'ordered'/);
+  assert.equal(purchase.status, 'ordered');
+  assert.equal(purchase.items[0].lineTotal, 10);
+});
+
+test('approvePurchaseOrder rejects non-pending orders', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const purchaseService = require('../src/services/purchaseService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/FROM purchase_orders/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: params[0],
+              supplier_id: '1',
+              branch_id: '2',
+              status: 'received',
+              total_amount: '10.00',
+              notes: null,
+              created_by: '42',
+              created_at: new Date('2026-05-10T00:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
+
+  await assert.rejects(() => purchaseService.approvePurchaseOrder(50), {
+    statusCode: 400,
+    message: 'Only pending purchase orders can be approved.',
+  });
+
+  assert.equal(queries.at(-1).sql, 'ROLLBACK');
+});

@@ -2,6 +2,12 @@ const purchaseService = require('../services/purchaseService');
 const HttpError = require('../utils/httpError');
 const { validatePurchasePayload } = require('../validators/purchaseValidator');
 
+function isPositiveInteger(value) {
+  const normalized = Number(value);
+
+  return Number.isInteger(normalized) && normalized > 0;
+}
+
 async function createPurchase(req, res, next) {
   const errors = validatePurchasePayload(req.body);
 
@@ -21,6 +27,24 @@ async function createPurchase(req, res, next) {
   }
 }
 
+async function approvePurchase(req, res, next) {
+  if (!isPositiveInteger(req.params.id)) {
+    next(new HttpError(400, 'Purchase order ID must be a positive integer.'));
+    return;
+  }
+
+  try {
+    const purchase = await purchaseService.approvePurchaseOrder(Number(req.params.id));
+
+    res.status(200).json({
+      data: purchase,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
+  approvePurchase,
   createPurchase,
 };

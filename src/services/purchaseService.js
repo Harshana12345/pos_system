@@ -83,6 +83,22 @@ function mapForeignKeyError(error) {
   return new HttpError(400, 'Purchase order references an invalid record.');
 }
 
+async function findPurchaseItemsByOrderId(client, purchaseOrderId) {
+  const itemResult = await client.query(
+    `SELECT id,
+            purchase_order_id,
+            product_id,
+            quantity,
+            cost_price
+     FROM purchase_order_items
+     WHERE purchase_order_id = $1
+     ORDER BY id ASC`,
+    [purchaseOrderId]
+  );
+
+  return itemResult.rows.map(mapPurchaseItemRow);
+}
+
 async function createPurchaseOrder(requester, payload) {
   const normalized = normalizePurchasePayload(payload);
   const client = await database.pool.connect();
@@ -163,7 +179,66 @@ async function createPurchaseOrder(requester, payload) {
   }
 }
 
+async function approvePurchaseOrder(purchaseOrderId) {
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const orderResult = await client.query(
+      `SELECT id,
+              supplier_id,
+              branch_id,
+              status,
+              total_amount,
+              notes,
+              created_by,
+              created_at
+       FROM purchase_orders
+       WHERE id = $1
+       FOR UPDATE`,
+      [purchaseOrderId]
+    );
+
+    if (orderResult.rowCount === 0) {
+      throw new HttpError(404, 'Purchase order not found.');
+    }
+
+    if (!['draft', 'pending'].includes(orderResult.rows[0].status)) {
+      throw new HttpError(400, 'Only pending purchase orders can be approved.');
+    }
+
+    const approvedResult = await client.query(
+      `UPDATE purchase_orders
+       SET status = 'ordered'
+       WHERE id = $1
+       RETURNING id,
+                 supplier_id,
+                 branch_id,
+                 status,
+                 total_amount,
+                 notes,
+                 created_by,
+                 created_at`,
+      [purchaseOrderId]
+    );
+
+    const items = await findPurchaseItemsByOrderId(client, purchaseOrderId);
+
+    await client.query('COMMIT');
+
+    return mapPurchaseOrderRow(approvedResult.rows[0], items);
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
+  approvePurchaseOrder,
   createPurchaseOrder,
   mapPurchaseItemRow,
   mapPurchaseOrderRow,
