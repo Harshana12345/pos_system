@@ -1,0 +1,424 @@
+const database = require('../config/database');
+const HttpError = require('../utils/httpError');
+
+function roundCurrency(value) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function normalizeNullableInteger(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  return Number(value);
+}
+
+function normalizeNullableString(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  const normalized = String(value).trim();
+
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizePaymentDate(value) {
+  if (value === undefined || value === null || value === '') {
+    return new Date();
+  }
+
+  return new Date(value);
+}
+
+function normalizeSalePayload(payload) {
+  const items = payload.items.map((item) => {
+    const quantity = Number(item.quantity);
+    const unitPrice = Number(item.unitPrice ?? item.unit_price);
+    const discountAmount = roundCurrency(
+      Number(item.discountAmount ?? item.discount_amount ?? 0)
+    );
+    const grossAmount = roundCurrency(quantity * unitPrice);
+    const lineTotal = roundCurrency(grossAmount - discountAmount);
+
+    if (lineTotal < 0) {
+      throw new HttpError(400, 'Sale item discount cannot exceed line amount.');
+    }
+
+    return {
+      productId: Number(item.productId ?? item.product_id),
+      variantId: normalizeNullableInteger(item.variantId ?? item.variant_id),
+      quantity,
+      unitPrice,
+      discountAmount,
+      lineTotal,
+    };
+  });
+  const subtotal = roundCurrency(items.reduce((sum, item) => sum + item.lineTotal, 0));
+  const discountAmount = roundCurrency(
+    Number(payload.discountAmount ?? payload.discount_amount ?? 0)
+  );
+  const taxAmount = roundCurrency(Number(payload.taxAmount ?? payload.tax_amount ?? 0));
+  const totalAmount = roundCurrency(subtotal - discountAmount + taxAmount);
+  const paidAmount = roundCurrency(
+    Number(payload.paidAmount ?? payload.paid_amount ?? payload.payment?.amount)
+  );
+
+  if (totalAmount < 0) {
+    throw new HttpError(400, 'Sale discount cannot exceed sale subtotal plus tax.');
+  }
+
+  if (!Number.isFinite(paidAmount) || paidAmount <= 0) {
+    throw new HttpError(400, 'Paid amount must be a positive number.');
+  }
+
+  if (paidAmount < totalAmount) {
+    throw new HttpError(400, 'Paid amount must cover the completed sale total.');
+  }
+
+  return {
+    customerId: normalizeNullableInteger(payload.customerId ?? payload.customer_id),
+    branchId: Number(payload.branchId ?? payload.branch_id),
+    subtotal,
+    discountAmount,
+    taxAmount,
+    totalAmount,
+    paidAmount,
+    balanceAmount: roundCurrency(Math.max(totalAmount - paidAmount, 0)),
+    payment: {
+      amount: paidAmount,
+      method: normalizeNullableString(
+        payload.paymentMethod ?? payload.payment_method ?? payload.payment?.method
+      ),
+      referenceNumber: normalizeNullableString(
+        payload.paymentReferenceNumber ??
+          payload.payment_reference_number ??
+          payload.payment?.referenceNumber ??
+          payload.payment?.reference_number
+      ),
+      notes: normalizeNullableString(
+        payload.paymentNotes ?? payload.payment_notes ?? payload.payment?.notes
+      ),
+      paidAt: normalizePaymentDate(
+        payload.paidAt ?? payload.paid_at ?? payload.payment?.paidAt
+      ),
+    },
+    items,
+  };
+}
+
+function mapSaleItemRow(row) {
+  return {
+    id: row.id,
+    saleId: row.sale_id,
+    productId: row.product_id,
+    variantId: row.variant_id,
+    quantity: Number(row.quantity),
+    unitPrice: Number(row.unit_price),
+    discountAmount: Number(row.discount_amount),
+    lineTotal: Number(row.line_total),
+  };
+}
+
+function mapSaleRow(row, items = []) {
+  return {
+    id: row.id,
+    customerId: row.customer_id,
+    branchId: row.branch_id,
+    status: row.status,
+    subtotal: Number(row.subtotal),
+    discountAmount: Number(row.discount_amount),
+    taxAmount: Number(row.tax_amount),
+    totalAmount: Number(row.total_amount),
+    paidAmount: Number(row.paid_amount),
+    balanceAmount: Number(row.balance_amount),
+    paymentStatus: row.payment_status,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    items,
+    payment: {
+      amount: Number(row.paid_amount),
+      status: row.payment_status,
+      balanceAmount: Number(row.balance_amount),
+    },
+  };
+}
+
+function mapAdjustmentRow(row) {
+  return {
+    id: row.id,
+    inventoryId: row.inventory_id,
+    productId: row.product_id,
+    variantId: row.variant_id,
+    branchId: row.branch_id,
+    previousQuantity: Number(row.previous_quantity),
+    newQuantity: Number(row.new_quantity),
+    quantityChange: Number(row.quantity_change),
+    reason: row.reason,
+    adjustedByUserId: row.adjusted_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+function mapPaymentRow(row) {
+  return {
+    id: row.id,
+    saleId: row.sale_id,
+    amount: Number(row.amount),
+    method: row.method,
+    referenceNumber: row.reference_number,
+    notes: row.notes,
+    paidAt: row.paid_at,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  };
+}
+
+function mapForeignKeyError(error) {
+  if (error.code !== '23503') {
+    return error;
+  }
+
+  if (error.constraint?.includes('customer')) {
+    return new HttpError(404, 'Customer not found.');
+  }
+
+  if (error.constraint?.includes('branch')) {
+    return new HttpError(404, 'Branch not found.');
+  }
+
+  if (error.constraint?.includes('product')) {
+    return new HttpError(404, 'Product not found.');
+  }
+
+  if (error.constraint?.includes('variant')) {
+    return new HttpError(404, 'Product variant not found.');
+  }
+
+  return new HttpError(400, 'Sale references an invalid record.');
+}
+
+async function deductInventoryItem(client, requester, saleId, branchId, item) {
+  const inventoryResult = await client.query(
+    `SELECT id,
+            product_id,
+            variant_id,
+            branch_id,
+            quantity
+     FROM inventory
+     WHERE product_id = $1
+       AND branch_id = $2
+       AND (
+         ($3::bigint IS NULL AND variant_id IS NULL)
+         OR variant_id = $3
+       )
+     FOR UPDATE`,
+    [item.productId, branchId, item.variantId]
+  );
+
+  if (inventoryResult.rowCount === 0) {
+    throw new HttpError(404, 'Inventory item not found.');
+  }
+
+  const inventory = inventoryResult.rows[0];
+  const previousQuantity = Number(inventory.quantity);
+  const newQuantity = previousQuantity - item.quantity;
+
+  if (newQuantity < 0) {
+    throw new HttpError(400, 'Insufficient stock for sale item.');
+  }
+
+  await client.query(
+    `UPDATE inventory
+     SET quantity = $2,
+         last_updated = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [inventory.id, newQuantity]
+  );
+
+  const adjustmentResult = await client.query(
+    `INSERT INTO inventory_adjustments (
+       inventory_id,
+       product_id,
+       variant_id,
+       branch_id,
+       previous_quantity,
+       new_quantity,
+       quantity_change,
+       reason,
+       adjusted_by_user_id
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING id,
+               inventory_id,
+               product_id,
+               variant_id,
+               branch_id,
+               previous_quantity,
+               new_quantity,
+               quantity_change,
+               reason,
+               adjusted_by_user_id,
+               created_at`,
+    [
+      inventory.id,
+      item.productId,
+      item.variantId,
+      branchId,
+      previousQuantity,
+      newQuantity,
+      -item.quantity,
+      `Sale ${saleId} completed`,
+      requester?.id ?? null,
+    ]
+  );
+
+  return mapAdjustmentRow(adjustmentResult.rows[0]);
+}
+
+async function createCompletedSale(requester, payload) {
+  const normalized = normalizeSalePayload(payload);
+  const client = await database.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const saleResult = await client.query(
+      `INSERT INTO sales (
+         customer_id,
+         branch_id,
+         status,
+         subtotal,
+         discount_amount,
+         tax_amount,
+         total_amount,
+         paid_amount,
+         balance_amount,
+         payment_status,
+         created_by
+       )
+       VALUES ($1, $2, 'completed', $3, $4, $5, $6, $7, $8, 'paid', $9)
+       RETURNING id,
+                 customer_id,
+                 branch_id,
+                 status,
+                 subtotal,
+                 discount_amount,
+                 tax_amount,
+                 total_amount,
+                 paid_amount,
+                 balance_amount,
+                 payment_status,
+                 created_by,
+                 created_at`,
+      [
+        normalized.customerId,
+        normalized.branchId,
+        normalized.subtotal,
+        normalized.discountAmount,
+        normalized.taxAmount,
+        normalized.totalAmount,
+        normalized.paidAmount,
+        normalized.balanceAmount,
+        requester?.id ?? null,
+      ]
+    );
+    const saleId = saleResult.rows[0].id;
+    const paymentResult = await client.query(
+      `INSERT INTO sale_payments (
+         sale_id,
+         amount,
+         method,
+         reference_number,
+         notes,
+         paid_at,
+         created_by
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id,
+                 sale_id,
+                 amount,
+                 method,
+                 reference_number,
+                 notes,
+                 paid_at,
+                 created_by,
+                 created_at`,
+      [
+        saleId,
+        normalized.payment.amount,
+        normalized.payment.method,
+        normalized.payment.referenceNumber,
+        normalized.payment.notes,
+        normalized.payment.paidAt,
+        requester?.id ?? null,
+      ]
+    );
+    const itemValues = [];
+    const itemPlaceholders = normalized.items.map((item, index) => {
+      const offset = index * 7;
+
+      itemValues.push(
+        saleId,
+        item.productId,
+        item.variantId,
+        item.quantity,
+        item.unitPrice,
+        item.discountAmount,
+        item.lineTotal
+      );
+
+      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`;
+    });
+    const itemResult = await client.query(
+      `INSERT INTO sale_items (
+         sale_id,
+         product_id,
+         variant_id,
+         quantity,
+         unit_price,
+         discount_amount,
+         line_total
+       )
+       VALUES ${itemPlaceholders.join(', ')}
+       RETURNING id,
+                 sale_id,
+                 product_id,
+                 variant_id,
+                 quantity,
+                 unit_price,
+                 discount_amount,
+                 line_total`,
+      itemValues
+    );
+    const inventoryAdjustments = [];
+
+    for (const item of normalized.items) {
+      inventoryAdjustments.push(
+        await deductInventoryItem(client, requester, saleId, normalized.branchId, item)
+      );
+    }
+
+    await client.query('COMMIT');
+
+    return {
+      ...mapSaleRow(saleResult.rows[0], itemResult.rows.map(mapSaleItemRow)),
+      payment: mapPaymentRow(paymentResult.rows[0]),
+      inventoryAdjustments,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    throw mapForeignKeyError(error);
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = {
+  createCompletedSale,
+  mapPaymentRow,
+  mapSaleItemRow,
+  mapSaleRow,
+  normalizeSalePayload,
+};
