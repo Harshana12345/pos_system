@@ -5,13 +5,15 @@ import { EmployeeListPage } from '@/pages/EmployeeListPage';
 import { InventoryListPage } from '@/pages/InventoryListPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { ProductListPage } from '@/pages/ProductListPage';
+import { StockTransferPage } from '@/pages/StockTransferPage';
 import type { LoginSession } from '@/services/authService';
 
-type AppView = 'products' | 'inventory' | 'categories' | 'brands' | 'employees';
+type AppView = 'products' | 'inventory' | 'transfers' | 'categories' | 'brands' | 'employees';
 
 const NAV_ITEMS: { label: string; value: AppView }[] = [
   { label: 'Products', value: 'products' },
   { label: 'Inventory', value: 'inventory' },
+  { label: 'Transfers', value: 'transfers' },
   { label: 'Categories', value: 'categories' },
   { label: 'Brands', value: 'brands' },
   { label: 'Employees', value: 'employees' },
@@ -76,6 +78,15 @@ export function App() {
       <>
         {nav}
         <InventoryListPage accessToken={session.accessToken} userName={session.user.name} />
+      </>
+    );
+  }
+
+  if (activeView === 'transfers') {
+    return (
+      <>
+        {nav}
+        <StockTransferPage accessToken={session.accessToken} userName={session.user.name} />
       </>
     );
   }

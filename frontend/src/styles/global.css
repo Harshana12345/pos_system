@@ -198,6 +198,13 @@ h1 {
   padding: 22px;
 }
 
+.stock-transfer-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+  padding: 22px;
+}
+
 .employee-form-alert,
 .form-actions {
   grid-column: 1 / -1;
@@ -206,8 +213,14 @@ h1 {
 .product-form-wide,
 .product-description,
 .catalog-form-wide,
-.catalog-description {
+.catalog-description,
+.stock-transfer-wide,
+.stock-transfer-reference {
   grid-column: 1 / -1;
+}
+
+.stock-transfer-product {
+  grid-column: span 2;
 }
 
 .product-form-section {
@@ -938,6 +951,50 @@ h1 {
   text-align: right;
 }
 
+.transfer-summary {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(180px, 1fr)) minmax(240px, 1.4fr);
+  gap: 14px;
+  align-items: center;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  padding: 16px;
+  background: #f7f8fa;
+}
+
+.transfer-summary div {
+  min-height: 74px;
+  border: 1px solid #e4e9f0;
+  border-radius: 6px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.transfer-summary span {
+  display: block;
+  color: #5c6675;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.transfer-summary strong {
+  display: block;
+  margin-top: 6px;
+  color: #173f3b;
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.transfer-summary p {
+  margin: 0;
+  color: #4b5563;
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
 .adjustment-confirm-check {
   align-items: flex-start;
 }
@@ -1000,7 +1057,9 @@ h1 {
   }
 
   .employee-form,
-  .catalog-form {
+  .catalog-form,
+  .stock-transfer-form,
+  .transfer-summary {
     grid-template-columns: 1fr;
   }
 
@@ -1011,6 +1070,10 @@ h1 {
   }
 
   .variant-attributes {
+    grid-column: auto;
+  }
+
+  .stock-transfer-product {
     grid-column: auto;
   }
 
