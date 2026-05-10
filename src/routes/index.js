@@ -3,6 +3,7 @@ const { Router } = require('express');
 const { authenticateJwt } = require('../middleware/authenticateJwt');
 const authRoutes = require('./authRoutes');
 const branchRoutes = require('./branchRoutes');
+const employeeRoutes = require('./employeeRoutes');
 const healthRoutes = require('./healthRoutes');
 const productRoutes = require('./productRoutes');
 
@@ -12,6 +13,7 @@ router.use('/auth', authRoutes);
 router.use('/health', healthRoutes);
 router.use(authenticateJwt);
 router.use('/branches', branchRoutes);
+router.use('/employees', employeeRoutes);
 router.use('/products', productRoutes);
 
 module.exports = router;
