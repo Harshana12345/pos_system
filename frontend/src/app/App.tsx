@@ -5,6 +5,7 @@ import { EmployeeListPage } from '@/pages/EmployeeListPage';
 import { InventoryListPage } from '@/pages/InventoryListPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { ProductListPage } from '@/pages/ProductListPage';
+import { PurchaseOrderPage } from '@/pages/PurchaseOrderPage';
 import { StockTransferPage } from '@/pages/StockTransferPage';
 import { SupplierDetailPage } from '@/pages/SupplierDetailPage';
 import { SupplierListPage } from '@/pages/SupplierListPage';
@@ -15,6 +16,7 @@ type AppView =
   | 'products'
   | 'inventory'
   | 'transfers'
+  | 'purchases'
   | 'categories'
   | 'brands'
   | 'suppliers'
@@ -24,6 +26,7 @@ const NAV_ITEMS: { label: string; value: AppView }[] = [
   { label: 'Products', value: 'products' },
   { label: 'Inventory', value: 'inventory' },
   { label: 'Transfers', value: 'transfers' },
+  { label: 'Purchases', value: 'purchases' },
   { label: 'Categories', value: 'categories' },
   { label: 'Brands', value: 'brands' },
   { label: 'Suppliers', value: 'suppliers' },
@@ -129,6 +132,19 @@ export function App() {
       <>
         {nav}
         <StockTransferPage accessToken={session.accessToken} userName={session.user.name} />
+      </>
+    );
+  }
+
+  if (activeView === 'purchases') {
+    return (
+      <>
+        {nav}
+        <PurchaseOrderPage
+          accessToken={session.accessToken}
+          userBranchId={session.user.branchId}
+          userName={session.user.name}
+        />
       </>
     );
   }

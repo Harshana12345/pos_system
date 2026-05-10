@@ -213,7 +213,8 @@ h1 {
 }
 
 .supplier-form,
-.supplier-payment-form {
+.supplier-payment-form,
+.purchase-order-form {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
@@ -230,6 +231,7 @@ h1 {
 .catalog-form-wide,
 .catalog-description,
 .supplier-form-wide,
+.purchase-form-wide,
 .stock-transfer-wide,
 .stock-transfer-reference {
   grid-column: 1 / -1;
@@ -279,6 +281,76 @@ h1 {
 .variant-list {
   display: grid;
   gap: 14px;
+}
+
+.purchase-line-list {
+  display: grid;
+  gap: 14px;
+}
+
+.purchase-line-row {
+  display: grid;
+  grid-template-columns:
+    minmax(260px, 1.5fr) repeat(2, minmax(120px, 0.6fr)) minmax(130px, 0.6fr)
+    auto;
+  gap: 12px;
+  align-items: end;
+  border-top: 1px solid #e4e9f0;
+  padding-top: 14px;
+}
+
+.purchase-line-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.purchase-line-total {
+  min-height: 46px;
+  border: 1px solid #e4e9f0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #ffffff;
+}
+
+.purchase-line-total span,
+.purchase-summary span {
+  display: block;
+  color: #5c6675;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.purchase-line-total strong {
+  display: block;
+  margin-top: 3px;
+  color: #173f3b;
+  font-size: 1rem;
+}
+
+.purchase-summary {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  padding: 16px;
+  background: #f7f8fa;
+}
+
+.purchase-summary strong {
+  display: block;
+  margin-top: 4px;
+  color: #173f3b;
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.purchase-summary p {
+  margin: 0;
+  color: #4b5563;
+  font-weight: 800;
 }
 
 .variant-row {
@@ -1189,6 +1261,7 @@ h1 {
   .catalog-form,
   .supplier-form,
   .supplier-payment-form,
+  .purchase-order-form,
   .stock-transfer-form,
   .supplier-detail-grid,
   .detail-list,
@@ -1197,9 +1270,15 @@ h1 {
   }
 
   .product-form,
+  .purchase-line-row,
   .variant-row,
   .image-grid {
     grid-template-columns: 1fr;
+  }
+
+  .purchase-summary {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .variant-attributes {
