@@ -2,14 +2,16 @@ import { useState } from 'react';
 import { BrandListPage } from '@/pages/BrandListPage';
 import { CategoryListPage } from '@/pages/CategoryListPage';
 import { EmployeeListPage } from '@/pages/EmployeeListPage';
+import { InventoryListPage } from '@/pages/InventoryListPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { ProductListPage } from '@/pages/ProductListPage';
 import type { LoginSession } from '@/services/authService';
 
-type AppView = 'products' | 'categories' | 'brands' | 'employees';
+type AppView = 'products' | 'inventory' | 'categories' | 'brands' | 'employees';
 
 const NAV_ITEMS: { label: string; value: AppView }[] = [
   { label: 'Products', value: 'products' },
+  { label: 'Inventory', value: 'inventory' },
   { label: 'Categories', value: 'categories' },
   { label: 'Brands', value: 'brands' },
   { label: 'Employees', value: 'employees' },
@@ -65,6 +67,15 @@ export function App() {
       <>
         {nav}
         <BrandListPage accessToken={session.accessToken} userName={session.user.name} />
+      </>
+    );
+  }
+
+  if (activeView === 'inventory') {
+    return (
+      <>
+        {nav}
+        <InventoryListPage accessToken={session.accessToken} userName={session.user.name} />
       </>
     );
   }
