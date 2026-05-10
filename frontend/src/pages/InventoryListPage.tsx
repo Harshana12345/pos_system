@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { MainLayout } from '@/layouts/MainLayout';
 import { ApiError } from '@/services/apiClient';
 import {
+  adjustInventoryStock,
   listInventory,
   type InventoryBranch,
   type InventoryItem,
@@ -13,8 +14,23 @@ type InventoryListPageProps = {
 };
 
 const PAGE_SIZE = 10;
+const ADJUSTMENT_REASONS = [
+  'Cycle count correction',
+  'Damaged stock',
+  'Waste',
+  'Supplier receipt',
+  'Customer return',
+  'Transfer correction',
+  'Other adjustment',
+];
 
 type BranchOption = Pick<InventoryBranch, 'id' | 'name'>;
+
+type AdjustmentFormState = {
+  quantityChange: string;
+  reason: string;
+  confirmed: boolean;
+};
 
 function formatDateTime(value?: string) {
   if (!value) {
@@ -106,6 +122,10 @@ function getSearchText(item: InventoryItem) {
     .toLowerCase();
 }
 
+function getItemLabel(item: InventoryItem) {
+  return item.variant ? `${item.product.name} - ${item.variant.name}` : item.product.name;
+}
+
 export function InventoryListPage({ accessToken, userName }: InventoryListPageProps) {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [query, setQuery] = useState('');
@@ -113,6 +133,15 @@ export function InventoryListPage({ accessToken, userName }: InventoryListPagePr
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [adjustingItem, setAdjustingItem] = useState<InventoryItem | null>(null);
+  const [adjustmentForm, setAdjustmentForm] = useState<AdjustmentFormState>({
+    quantityChange: '',
+    reason: ADJUSTMENT_REASONS[0],
+    confirmed: false,
+  });
+  const [adjustmentError, setAdjustmentError] = useState('');
+  const [adjustmentSuccess, setAdjustmentSuccess] = useState('');
+  const [isAdjusting, setIsAdjusting] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -151,6 +180,25 @@ export function InventoryListPage({ accessToken, userName }: InventoryListPagePr
     };
   }, [accessToken]);
 
+  useEffect(() => {
+    if (!adjustingItem) {
+      return undefined;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !isAdjusting) {
+        setAdjustingItem(null);
+        setAdjustmentError('');
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [adjustingItem, isAdjusting]);
+
   const branchOptions = useMemo(() => getBranchOptions(inventory), [inventory]);
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -174,6 +222,18 @@ export function InventoryListPage({ accessToken, userName }: InventoryListPagePr
   const visibleInventory = filteredInventory.slice(pageStart, pageStart + PAGE_SIZE);
   const resultStart = filteredInventory.length === 0 ? 0 : pageStart + 1;
   const resultEnd = Math.min(pageStart + PAGE_SIZE, filteredInventory.length);
+  const parsedQuantityChange = Number(adjustmentForm.quantityChange);
+  const hasQuantityChange =
+    adjustmentForm.quantityChange.trim() !== '' && Number.isInteger(parsedQuantityChange);
+  const projectedQuantity = adjustingItem ? adjustingItem.quantity + parsedQuantityChange : 0;
+  const canSubmitAdjustment =
+    Boolean(adjustingItem) &&
+    hasQuantityChange &&
+    parsedQuantityChange !== 0 &&
+    projectedQuantity >= 0 &&
+    adjustmentForm.reason.trim().length > 0 &&
+    adjustmentForm.confirmed &&
+    !isAdjusting;
 
   function handleSearch(value: string) {
     setQuery(value);
@@ -183,6 +243,78 @@ export function InventoryListPage({ accessToken, userName }: InventoryListPagePr
   function handleBranchFilter(value: string) {
     setBranchFilter(value);
     setPage(1);
+  }
+
+  function openAdjustmentModal(item: InventoryItem) {
+    setAdjustingItem(item);
+    setAdjustmentForm({
+      quantityChange: '',
+      reason: ADJUSTMENT_REASONS[0],
+      confirmed: false,
+    });
+    setAdjustmentError('');
+    setAdjustmentSuccess('');
+  }
+
+  function closeAdjustmentModal() {
+    if (isAdjusting) {
+      return;
+    }
+
+    setAdjustingItem(null);
+    setAdjustmentError('');
+  }
+
+  async function handleAdjustmentSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!adjustingItem) {
+      return;
+    }
+
+    if (!hasQuantityChange || parsedQuantityChange === 0) {
+      setAdjustmentError('Enter a positive or negative whole-number adjustment.');
+      return;
+    }
+
+    if (projectedQuantity < 0) {
+      setAdjustmentError('This adjustment would make stock negative.');
+      return;
+    }
+
+    if (!adjustmentForm.confirmed) {
+      setAdjustmentError('Confirm the adjustment before applying it.');
+      return;
+    }
+
+    setIsAdjusting(true);
+    setAdjustmentError('');
+
+    try {
+      const response = await adjustInventoryStock(accessToken, {
+        inventoryId: adjustingItem.id,
+        quantityChange: parsedQuantityChange,
+        reason: adjustmentForm.reason,
+      });
+
+      setInventory((currentInventory) =>
+        currentInventory.map((item) =>
+          item.id === response.data.inventory.id ? response.data.inventory : item,
+        ),
+      );
+      setAdjustmentSuccess(
+        `${getItemLabel(response.data.inventory)} adjusted to ${response.data.inventory.quantity} units.`,
+      );
+      setAdjustingItem(null);
+    } catch (saveError) {
+      if (saveError instanceof ApiError) {
+        setAdjustmentError(saveError.message);
+      } else {
+        setAdjustmentError('Unable to adjust stock. Check your connection and try again.');
+      }
+    } finally {
+      setIsAdjusting(false);
+    }
   }
 
   return (
@@ -258,6 +390,12 @@ export function InventoryListPage({ accessToken, userName }: InventoryListPagePr
           </div>
         ) : null}
 
+        {adjustmentSuccess ? (
+          <div className="table-message table-message-success" role="status">
+            {adjustmentSuccess}
+          </div>
+        ) : null}
+
         {isLoading ? (
           <div className="table-message" role="status">
             Loading inventory...
@@ -277,6 +415,7 @@ export function InventoryListPage({ accessToken, userName }: InventoryListPagePr
                     <th scope="col">Indicator</th>
                     <th scope="col">Last Updated</th>
                     <th scope="col">Status</th>
+                    <th scope="col">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -325,6 +464,15 @@ export function InventoryListPage({ accessToken, userName }: InventoryListPagePr
                           </span>
                           <span className="employee-email">{formatLabel(item.product.status)}</span>
                         </td>
+                        <td>
+                          <button
+                            className="table-action"
+                            onClick={() => openAdjustmentModal(item)}
+                            type="button"
+                          >
+                            Adjust
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -358,6 +506,139 @@ export function InventoryListPage({ accessToken, userName }: InventoryListPagePr
           </>
         ) : null}
       </section>
+
+      {adjustingItem ? (
+        <div
+          aria-labelledby="stock-adjustment-title"
+          aria-modal="true"
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeAdjustmentModal();
+            }
+          }}
+          role="dialog"
+        >
+          <form className="modal-panel stock-adjustment-modal" onSubmit={handleAdjustmentSubmit}>
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Stock Adjustment</p>
+                <h2 id="stock-adjustment-title">{getItemLabel(adjustingItem)}</h2>
+                <p>
+                  {adjustingItem.branch.name} currently has {adjustingItem.quantity} units.
+                </p>
+              </div>
+              <button
+                aria-label="Close stock adjustment modal"
+                className="modal-close"
+                disabled={isAdjusting}
+                onClick={closeAdjustmentModal}
+                type="button"
+              >
+                x
+              </button>
+            </div>
+
+            <div className="stock-adjustment-body">
+              <label className="field" htmlFor="stock-adjustment-quantity">
+                <span>Quantity adjustment</span>
+                <input
+                  aria-invalid={
+                    adjustmentForm.quantityChange.trim() !== '' &&
+                    (!hasQuantityChange || parsedQuantityChange === 0 || projectedQuantity < 0)
+                  }
+                  autoFocus
+                  id="stock-adjustment-quantity"
+                  onChange={(event) =>
+                    setAdjustmentForm((currentForm) => ({
+                      ...currentForm,
+                      confirmed: false,
+                      quantityChange: event.target.value,
+                    }))
+                  }
+                  placeholder="Use -3 or 12"
+                  step="1"
+                  type="number"
+                  value={adjustmentForm.quantityChange}
+                />
+                <span className="form-hint">
+                  Use positive numbers to add stock and negative numbers to remove stock.
+                </span>
+              </label>
+
+              <label className="field" htmlFor="stock-adjustment-reason">
+                <span>Reason</span>
+                <select
+                  id="stock-adjustment-reason"
+                  onChange={(event) =>
+                    setAdjustmentForm((currentForm) => ({
+                      ...currentForm,
+                      confirmed: false,
+                      reason: event.target.value,
+                    }))
+                  }
+                  value={adjustmentForm.reason}
+                >
+                  {ADJUSTMENT_REASONS.map((reason) => (
+                    <option key={reason} value={reason}>
+                      {reason}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="adjustment-confirmation">
+                <div>
+                  <span>New quantity</span>
+                  <strong>{hasQuantityChange ? projectedQuantity : '--'}</strong>
+                </div>
+                <p>
+                  {hasQuantityChange
+                    ? `${adjustingItem.quantity} ${parsedQuantityChange > 0 ? '+' : ''}${parsedQuantityChange} units`
+                    : 'Enter a quantity adjustment to preview the result.'}
+                </p>
+              </div>
+
+              <label className="checkbox-field adjustment-confirm-check">
+                <input
+                  checked={adjustmentForm.confirmed}
+                  disabled={
+                    !hasQuantityChange || parsedQuantityChange === 0 || projectedQuantity < 0
+                  }
+                  onChange={(event) =>
+                    setAdjustmentForm((currentForm) => ({
+                      ...currentForm,
+                      confirmed: event.target.checked,
+                    }))
+                  }
+                  type="checkbox"
+                />
+                <span>I confirm this stock adjustment is correct.</span>
+              </label>
+
+              {adjustmentError ? (
+                <div className="form-alert" role="alert">
+                  {adjustmentError}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="modal-actions">
+              <button
+                className="secondary-action"
+                disabled={isAdjusting}
+                onClick={closeAdjustmentModal}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button className="primary-action" disabled={!canSubmitAdjustment} type="submit">
+                {isAdjusting ? 'Applying...' : 'Apply Adjustment'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </MainLayout>
   );
 }

@@ -40,6 +40,33 @@ type InventoryListResponse = {
   data: InventoryItem[];
 };
 
+export type InventoryAdjustment = {
+  id: number;
+  inventoryId: number;
+  productId: number;
+  variantId?: number | null;
+  branchId: number;
+  previousQuantity: number;
+  newQuantity: number;
+  quantityChange: number;
+  reason: string;
+  adjustedByUserId?: number | null;
+  createdAt: string;
+};
+
+type InventoryAdjustmentResponse = {
+  data: {
+    inventory: InventoryItem;
+    adjustment: InventoryAdjustment;
+  };
+};
+
+export type AdjustInventoryPayload = {
+  inventoryId: number;
+  quantityChange: number;
+  reason: string;
+};
+
 function authorizedHeaders(accessToken: string) {
   return {
     Authorization: `Bearer ${accessToken}`,
@@ -57,5 +84,13 @@ export function listInventory(accessToken: string, branchId?: number | string) {
 
   return apiRequest<InventoryListResponse>(`/inventory${queryString ? `?${queryString}` : ''}`, {
     headers: authorizedHeaders(accessToken),
+  });
+}
+
+export function adjustInventoryStock(accessToken: string, payload: AdjustInventoryPayload) {
+  return apiRequest<InventoryAdjustmentResponse>('/inventory/adjust', {
+    body: JSON.stringify(payload),
+    headers: authorizedHeaders(accessToken),
+    method: 'POST',
   });
 }
