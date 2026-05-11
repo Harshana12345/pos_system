@@ -698,6 +698,43 @@ test('createCompletedSale rejects underpayment before opening a transaction', {
   );
 });
 
+test('normalizeSaleDraftPayload applies item and order discount rules', {
+  skip: !dependenciesAvailable,
+}, () => {
+  const saleService = require('../src/services/saleService');
+
+  const draft = saleService.normalizeSaleDraftPayload({
+    branchId: '2',
+    discountType: 'percentage',
+    discountValue: '10',
+    taxAmount: '0.50',
+    items: [
+      {
+        productId: '10',
+        quantity: '2',
+        unitPrice: '10.00',
+        discountType: 'percentage',
+        discountValue: '25',
+      },
+      {
+        productId: '11',
+        quantity: '1',
+        unitPrice: '5.00',
+        discount_type: 'fixed',
+        discount_value: '1.00',
+      },
+    ],
+  });
+
+  assert.equal(draft.items[0].discountAmount, 5);
+  assert.equal(draft.items[0].lineTotal, 15);
+  assert.equal(draft.items[1].discountAmount, 1);
+  assert.equal(draft.items[1].lineTotal, 4);
+  assert.equal(draft.subtotal, 19);
+  assert.equal(draft.discountAmount, 1.9);
+  assert.equal(draft.totalAmount, 17.6);
+});
+
 test('suspendSale stores a sale draft without payment or inventory movement', {
   skip: !dependenciesAvailable,
 }, async (t) => {

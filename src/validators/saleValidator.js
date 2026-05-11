@@ -32,6 +32,60 @@ function isOptionalString(value) {
   return value === undefined || value === null || typeof value === 'string';
 }
 
+function getDiscountFields(payload) {
+  const discount = payload.discount && isPlainObject(payload.discount) ? payload.discount : {};
+  const value =
+    payload.discountValue ??
+    payload.discount_value ??
+    discount.value ??
+    payload.discountAmount ??
+    payload.discount_amount ??
+    discount.amount;
+  const legacyAmount =
+    payload.discountValue === undefined &&
+    payload.discount_value === undefined &&
+    discount.value === undefined;
+
+  return {
+    type: payload.discountType ?? payload.discount_type ?? discount.type,
+    value,
+    legacyAmount,
+  };
+}
+
+function validateDiscount(payload, label, errors) {
+  const { type, value, legacyAmount } = getDiscountFields(payload);
+
+  if (type !== undefined && type !== null && type !== '') {
+    if (typeof type !== 'string') {
+      errors.push(`${label} discount type must be fixed or percentage.`);
+    } else if (
+      !['fixed', 'fixed_amount', 'amount', 'percentage', 'percent'].includes(
+        type.trim().toLowerCase()
+      )
+    ) {
+      errors.push(`${label} discount type must be fixed or percentage.`);
+    }
+  }
+
+  if (value !== undefined && !isNonNegativeNumber(value)) {
+    errors.push(
+      legacyAmount
+        ? `${label} discount amount must be a non-negative number.`
+        : `${label} discount value must be a non-negative number.`
+    );
+    return;
+  }
+
+  if (
+    typeof type === 'string' &&
+    ['percentage', 'percent'].includes(type.trim().toLowerCase()) &&
+    Number(value ?? 0) > 100
+  ) {
+    errors.push(`${label} discount percentage cannot exceed 100.`);
+  }
+}
+
 function validatePayment(payment, label, errors) {
   if (!isPlainObject(payment)) {
     errors.push(`${label} details are required.`);
@@ -143,9 +197,7 @@ function validateSalePayload(payload) {
     errors.push('Branch ID must be a positive integer.');
   }
 
-  if (!isNonNegativeNumber(payload.discountAmount ?? payload.discount_amount ?? 0)) {
-    errors.push('Sale discount amount must be a non-negative number.');
-  }
+  validateDiscount(payload, 'Sale', errors);
 
   if (!isNonNegativeNumber(payload.taxAmount ?? payload.tax_amount ?? 0)) {
     errors.push('Sale tax amount must be a non-negative number.');
@@ -219,7 +271,6 @@ function validateSaleItems(items, errors) {
     const productId = item.productId ?? item.product_id;
     const variantId = item.variantId ?? item.variant_id;
     const unitPrice = item.unitPrice ?? item.unit_price;
-    const discountAmount = item.discountAmount ?? item.discount_amount ?? 0;
 
     if (!isPositiveInteger(productId)) {
       errors.push(`${label} product ID must be a positive integer.`);
@@ -239,9 +290,7 @@ function validateSaleItems(items, errors) {
       errors.push(`${label} unit price must be a non-negative number.`);
     }
 
-    if (!isNonNegativeNumber(discountAmount)) {
-      errors.push(`${label} discount amount must be a non-negative number.`);
-    }
+    validateDiscount(item, label, errors);
   });
 }
 
@@ -265,9 +314,7 @@ function validateSuspendedSalePayload(payload) {
     errors.push('Branch ID must be a positive integer.');
   }
 
-  if (!isNonNegativeNumber(payload.discountAmount ?? payload.discount_amount ?? 0)) {
-    errors.push('Sale discount amount must be a non-negative number.');
-  }
+  validateDiscount(payload, 'Sale', errors);
 
   if (!isNonNegativeNumber(payload.taxAmount ?? payload.tax_amount ?? 0)) {
     errors.push('Sale tax amount must be a non-negative number.');

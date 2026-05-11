@@ -49,6 +49,56 @@ function normalizePaymentPayload(payment) {
   };
 }
 
+function normalizeDiscountType(value, label) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+
+  if (['fixed', 'fixed_amount', 'amount'].includes(normalized)) {
+    return 'fixed';
+  }
+
+  if (['percentage', 'percent'].includes(normalized)) {
+    return 'percentage';
+  }
+
+  throw new HttpError(400, `${label} discount type must be fixed or percentage.`);
+}
+
+function normalizeDiscountAmount(payload, baseAmount, label) {
+  const discount =
+    payload.discount && typeof payload.discount === 'object' ? payload.discount : {};
+  const type = normalizeDiscountType(
+    payload.discountType ?? payload.discount_type ?? discount.type,
+    label
+  );
+  const rawValue =
+    payload.discountValue ??
+    payload.discount_value ??
+    discount.value ??
+    payload.discountAmount ??
+    payload.discount_amount ??
+    discount.amount ??
+    0;
+  const value = Number(rawValue);
+
+  if (!Number.isFinite(value) || value < 0) {
+    throw new HttpError(400, `${label} discount value must be a non-negative number.`);
+  }
+
+  if (type === 'percentage') {
+    if (value > 100) {
+      throw new HttpError(400, `${label} discount percentage cannot exceed 100.`);
+    }
+
+    return roundCurrency((baseAmount * value) / 100);
+  }
+
+  return roundCurrency(value);
+}
+
 function normalizeSaleFilters(filters = {}) {
   return {
     branchId: filters.branchId ?? filters.branch_id,
@@ -126,10 +176,8 @@ function normalizeSaleDraftPayload(payload) {
   const items = payload.items.map((item) => {
     const quantity = Number(item.quantity);
     const unitPrice = Number(item.unitPrice ?? item.unit_price);
-    const discountAmount = roundCurrency(
-      Number(item.discountAmount ?? item.discount_amount ?? 0)
-    );
     const grossAmount = roundCurrency(quantity * unitPrice);
+    const discountAmount = normalizeDiscountAmount(item, grossAmount, 'Sale item');
     const lineTotal = roundCurrency(grossAmount - discountAmount);
 
     if (lineTotal < 0) {
@@ -146,9 +194,7 @@ function normalizeSaleDraftPayload(payload) {
     };
   });
   const subtotal = roundCurrency(items.reduce((sum, item) => sum + item.lineTotal, 0));
-  const discountAmount = roundCurrency(
-    Number(payload.discountAmount ?? payload.discount_amount ?? 0)
-  );
+  const discountAmount = normalizeDiscountAmount(payload, subtotal, 'Sale');
   const taxAmount = roundCurrency(Number(payload.taxAmount ?? payload.tax_amount ?? 0));
   const totalAmount = roundCurrency(subtotal - discountAmount + taxAmount);
 

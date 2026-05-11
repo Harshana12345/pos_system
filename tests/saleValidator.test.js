@@ -94,6 +94,26 @@ test('validateSalePayload accepts split sale payments', () => {
   assert.deepEqual(errors, []);
 });
 
+test('validateSalePayload accepts percentage and fixed discount fields', () => {
+  const errors = validateSalePayload({
+    branchId: '2',
+    discountType: 'percentage',
+    discountValue: '10',
+    paidAmount: '20.00',
+    items: [
+      {
+        productId: '10',
+        quantity: '2',
+        unitPrice: '9.50',
+        discount_type: 'fixed',
+        discount_value: '1.00',
+      },
+    ],
+  });
+
+  assert.deepEqual(errors, []);
+});
+
 test('validateSalePayload rejects missing sale fields', () => {
   const errors = validateSalePayload({
     customerId: 'abc',
@@ -117,6 +137,29 @@ test('validateSalePayload rejects missing sale fields', () => {
     'Payment reference number must be a string.',
     'Payment notes must be a string.',
     'At least one sale item is required.',
+  ]);
+});
+
+test('validateSalePayload rejects invalid discount fields', () => {
+  const errors = validateSalePayload({
+    branchId: '2',
+    discountType: 'rebate',
+    discountValue: '101',
+    paidAmount: '10',
+    items: [
+      {
+        productId: '10',
+        quantity: '1',
+        unitPrice: '5.00',
+        discountType: 'percentage',
+        discountValue: '101',
+      },
+    ],
+  });
+
+  assert.deepEqual(errors, [
+    'Sale discount type must be fixed or percentage.',
+    'Sale item 1 discount percentage cannot exceed 100.',
   ]);
 });
 
