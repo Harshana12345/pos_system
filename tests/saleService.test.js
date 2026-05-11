@@ -242,6 +242,13 @@ test('createCompletedSale creates sale, deducts inventory, and records payment',
         };
       }
 
+      if (/FROM products/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [{ id: '10', tax_rate: '5.00' }],
+        };
+      }
+
       if (/INSERT INTO sale_items/.test(sql)) {
         return {
           rowCount: 1,
@@ -337,7 +344,7 @@ test('createCompletedSale creates sale, deducts inventory, and records payment',
       branchId: '2',
       discountAmount: '1.00',
       taxAmount: '0.50',
-      paidAmount: '18.50',
+      paidAmount: '18.95',
       paymentMethod: 'cash',
       paymentReferenceNumber: 'RCPT-70',
       items: [
@@ -361,22 +368,25 @@ test('createCompletedSale creates sale, deducts inventory, and records payment',
       queries[4].sql,
       queries[5].sql,
       queries[6].sql,
+      queries[7].sql,
       'COMMIT',
     ]
   );
-  assert.deepEqual(queries[1].params, [1, 2, 19, 1, 0.5, 18.5, 18.5, 0, 42]);
-  assert.match(queries[2].sql, /INSERT INTO sale_payments/);
-  assert.equal(queries[2].params[0], '70');
-  assert.equal(queries[2].params[1], 18.5);
-  assert.equal(queries[2].params[2], 'cash');
-  assert.equal(queries[2].params[3], 'RCPT-70');
-  assert.equal(queries[2].params[6], 42);
-  assert.match(queries[3].sql, /INSERT INTO sale_items/);
-  assert.deepEqual(queries[3].params, ['70', 10, 5, 2, 9.5, 0, 19]);
-  assert.match(queries[4].sql, /FOR UPDATE/);
-  assert.deepEqual(queries[4].params, [10, 2, 5]);
-  assert.deepEqual(queries[5].params, ['30', 6]);
-  assert.deepEqual(queries[6].params, [
+  assert.match(queries[1].sql, /FROM products/);
+  assert.deepEqual(queries[1].params, [[10]]);
+  assert.deepEqual(queries[2].params, [1, 2, 19, 1, 0.95, 18.95, 18.95, 0, 42]);
+  assert.match(queries[3].sql, /INSERT INTO sale_payments/);
+  assert.equal(queries[3].params[0], '70');
+  assert.equal(queries[3].params[1], 18.95);
+  assert.equal(queries[3].params[2], 'cash');
+  assert.equal(queries[3].params[3], 'RCPT-70');
+  assert.equal(queries[3].params[6], 42);
+  assert.match(queries[4].sql, /INSERT INTO sale_items/);
+  assert.deepEqual(queries[4].params, ['70', 10, 5, 2, 9.5, 0, 19]);
+  assert.match(queries[5].sql, /FOR UPDATE/);
+  assert.deepEqual(queries[5].params, [10, 2, 5]);
+  assert.deepEqual(queries[6].params, ['30', 6]);
+  assert.deepEqual(queries[7].params, [
     '30',
     10,
     5,
@@ -388,8 +398,8 @@ test('createCompletedSale creates sale, deducts inventory, and records payment',
     42,
   ]);
   assert.equal(sale.status, 'completed');
-  assert.equal(sale.totalAmount, 18.5);
-  assert.equal(sale.payment.amount, 18.5);
+  assert.equal(sale.totalAmount, 18.95);
+  assert.equal(sale.payment.amount, 18.95);
   assert.equal(sale.payment.method, 'cash');
   assert.equal(sale.inventoryAdjustments[0].quantityChange, -2);
 });
@@ -425,6 +435,13 @@ test('createCompletedSale records multiple split payments for one sale', {
               created_at: new Date('2026-05-10T00:00:00.000Z'),
             },
           ],
+        };
+      }
+
+      if (/FROM products/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [{ id: '10', tax_rate: '0.00' }],
         };
       }
 
@@ -539,16 +556,18 @@ test('createCompletedSale records multiple split payments for one sale', {
     }
   );
 
-  assert.deepEqual(queries[1].params, [null, 2, 18.5, 0, 0, 18.5, 18.5, 0, 42]);
-  assert.match(queries[2].sql, /INSERT INTO sale_payments/);
-  assert.deepEqual(queries[2].params.slice(0, 5), [
+  assert.match(queries[1].sql, /FROM products/);
+  assert.deepEqual(queries[1].params, [[10]]);
+  assert.deepEqual(queries[2].params, [null, 2, 18.5, 0, 0, 18.5, 18.5, 0, 42]);
+  assert.match(queries[3].sql, /INSERT INTO sale_payments/);
+  assert.deepEqual(queries[3].params.slice(0, 5), [
     '70',
     10,
     'cash',
     null,
     'Cash drawer',
   ]);
-  assert.deepEqual(queries[2].params.slice(7, 12), [
+  assert.deepEqual(queries[3].params.slice(7, 12), [
     '70',
     8.5,
     'card',
@@ -593,6 +612,13 @@ test('createCompletedSale rejects insufficient stock and rolls back', {
               created_at: new Date('2026-05-10T00:00:00.000Z'),
             },
           ],
+        };
+      }
+
+      if (/FROM products/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [{ id: '10', tax_rate: '0.00' }],
         };
       }
 
@@ -679,10 +705,34 @@ test('createCompletedSale rejects insufficient stock and rolls back', {
   assert.equal(queries.at(-1).sql, 'ROLLBACK');
 });
 
-test('createCompletedSale rejects underpayment before opening a transaction', {
+test('createCompletedSale rejects underpayment after applying product tax', {
   skip: !dependenciesAvailable,
-}, async () => {
+}, async (t) => {
+  const database = require('../src/config/database');
   const saleService = require('../src/services/saleService');
+  const originalConnect = database.pool.connect;
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/FROM products/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [{ id: '10', tax_rate: '0.00' }],
+        };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+  });
+
+  database.pool.connect = async () => client;
 
   await assert.rejects(
     () =>
@@ -696,6 +746,9 @@ test('createCompletedSale rejects underpayment before opening a transaction', {
       message: 'Paid amount must cover the completed sale total.',
     }
   );
+
+  assert.equal(queries.some(({ sql }) => /INSERT INTO sales/.test(sql)), false);
+  assert.equal(queries.at(-1).sql, 'ROLLBACK');
 });
 
 test('normalizeSaleDraftPayload applies item and order discount rules', {
@@ -703,36 +756,44 @@ test('normalizeSaleDraftPayload applies item and order discount rules', {
 }, () => {
   const saleService = require('../src/services/saleService');
 
-  const draft = saleService.normalizeSaleDraftPayload({
-    branchId: '2',
-    discountType: 'percentage',
-    discountValue: '10',
-    taxAmount: '0.50',
-    items: [
-      {
-        productId: '10',
-        quantity: '2',
-        unitPrice: '10.00',
-        discountType: 'percentage',
-        discountValue: '25',
-      },
-      {
-        productId: '11',
-        quantity: '1',
-        unitPrice: '5.00',
-        discount_type: 'fixed',
-        discount_value: '1.00',
-      },
-    ],
-  });
+  const draft = saleService.normalizeSaleDraftPayload(
+    {
+      branchId: '2',
+      discountType: 'percentage',
+      discountValue: '10',
+      items: [
+        {
+          productId: '10',
+          quantity: '2',
+          unitPrice: '10.00',
+          discountType: 'percentage',
+          discountValue: '25',
+        },
+        {
+          productId: '11',
+          quantity: '1',
+          unitPrice: '5.00',
+          discount_type: 'fixed',
+          discount_value: '1.00',
+        },
+      ],
+    },
+    new Map([
+      ['10', 10],
+      ['11', 5],
+    ])
+  );
 
   assert.equal(draft.items[0].discountAmount, 5);
+  assert.equal(draft.items[0].taxAmount, 1.5);
   assert.equal(draft.items[0].lineTotal, 15);
   assert.equal(draft.items[1].discountAmount, 1);
+  assert.equal(draft.items[1].taxAmount, 0.2);
   assert.equal(draft.items[1].lineTotal, 4);
   assert.equal(draft.subtotal, 19);
   assert.equal(draft.discountAmount, 1.9);
-  assert.equal(draft.totalAmount, 17.6);
+  assert.equal(draft.taxAmount, 1.7);
+  assert.equal(draft.totalAmount, 18.8);
 });
 
 test('suspendSale stores a sale draft without payment or inventory movement', {
@@ -766,6 +827,13 @@ test('suspendSale stores a sale draft without payment or inventory movement', {
               created_at: new Date('2026-05-10T00:04:00.000Z'),
             },
           ],
+        };
+      }
+
+      if (/FROM products/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [{ id: '10', tax_rate: '5.00' }],
         };
       }
 
@@ -804,7 +872,6 @@ test('suspendSale stores a sale draft without payment or inventory movement', {
       customerId: '1',
       branchId: '2',
       discountAmount: '1.00',
-      taxAmount: '0.50',
       items: [
         {
           productId: '10',
@@ -818,17 +885,19 @@ test('suspendSale stores a sale draft without payment or inventory movement', {
 
   assert.deepEqual(
     queries.map(({ sql }) => sql),
-    ['BEGIN', queries[1].sql, queries[2].sql, 'COMMIT']
+    ['BEGIN', queries[1].sql, queries[2].sql, queries[3].sql, 'COMMIT']
   );
-  assert.match(queries[1].sql, /'suspended'/);
-  assert.match(queries[1].sql, /'unpaid'/);
-  assert.deepEqual(queries[1].params, [1, 2, 19, 1, 0.5, 18.5, 42]);
-  assert.deepEqual(queries[2].params, ['72', 10, 5, 2, 9.5, 0, 19]);
+  assert.match(queries[1].sql, /FROM products/);
+  assert.deepEqual(queries[1].params, [[10]]);
+  assert.match(queries[2].sql, /'suspended'/);
+  assert.match(queries[2].sql, /'unpaid'/);
+  assert.deepEqual(queries[2].params, [1, 2, 19, 1, 0.95, 18.95, 42]);
+  assert.deepEqual(queries[3].params, ['72', 10, 5, 2, 9.5, 0, 19]);
   assert.equal(queries.some(({ sql }) => /INSERT INTO sale_payments/.test(sql)), false);
   assert.equal(queries.some(({ sql }) => /UPDATE inventory/.test(sql)), false);
   assert.equal(sale.status, 'suspended');
-  assert.equal(sale.totalAmount, 18.5);
-  assert.equal(sale.balanceAmount, 18.5);
+  assert.equal(sale.totalAmount, 18.95);
+  assert.equal(sale.balanceAmount, 18.95);
   assert.equal(sale.items.length, 1);
 });
 

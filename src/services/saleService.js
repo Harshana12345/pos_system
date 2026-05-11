@@ -99,6 +99,37 @@ function normalizeDiscountAmount(payload, baseAmount, label) {
   return roundCurrency(value);
 }
 
+function normalizeTaxRate(value) {
+  const normalized = Number(value ?? 0);
+
+  if (!Number.isFinite(normalized) || normalized < 0) {
+    throw new HttpError(400, 'Product tax rate must be a non-negative number.');
+  }
+
+  return normalized;
+}
+
+async function findProductTaxRates(client, items) {
+  const productIds = [
+    ...new Set(items.map((item) => Number(item.productId ?? item.product_id))),
+  ];
+
+  const result = await client.query(
+    `SELECT id,
+            tax_rate
+     FROM products
+     WHERE id = ANY($1::bigint[])
+       AND deleted_at IS NULL`,
+    [productIds]
+  );
+
+  if (result.rowCount !== productIds.length) {
+    throw new HttpError(404, 'Product not found.');
+  }
+
+  return new Map(result.rows.map((row) => [String(row.id), normalizeTaxRate(row.tax_rate)]));
+}
+
 function normalizeSaleFilters(filters = {}) {
   return {
     branchId: filters.branchId ?? filters.branch_id,
@@ -126,8 +157,8 @@ function normalizeSaleFilters(filters = {}) {
   };
 }
 
-function normalizeSalePayload(payload) {
-  const draft = normalizeSaleDraftPayload(payload);
+function normalizeSalePayload(payload, productTaxRates) {
+  const draft = normalizeSaleDraftPayload(payload, productTaxRates);
   let payments;
 
   if (payload.payments !== undefined) {
@@ -172,30 +203,37 @@ function normalizeSalePayload(payload) {
   };
 }
 
-function normalizeSaleDraftPayload(payload) {
+function normalizeSaleDraftPayload(payload, productTaxRates = new Map()) {
   const items = payload.items.map((item) => {
+    const productId = Number(item.productId ?? item.product_id);
     const quantity = Number(item.quantity);
     const unitPrice = Number(item.unitPrice ?? item.unit_price);
     const grossAmount = roundCurrency(quantity * unitPrice);
     const discountAmount = normalizeDiscountAmount(item, grossAmount, 'Sale item');
     const lineTotal = roundCurrency(grossAmount - discountAmount);
+    const taxRate = normalizeTaxRate(
+      productTaxRates.get(String(productId)) ?? item.taxRate ?? item.tax_rate ?? 0
+    );
+    const taxAmount = roundCurrency((lineTotal * taxRate) / 100);
 
     if (lineTotal < 0) {
       throw new HttpError(400, 'Sale item discount cannot exceed line amount.');
     }
 
     return {
-      productId: Number(item.productId ?? item.product_id),
+      productId,
       variantId: normalizeNullableInteger(item.variantId ?? item.variant_id),
       quantity,
       unitPrice,
       discountAmount,
+      taxRate,
+      taxAmount,
       lineTotal,
     };
   });
   const subtotal = roundCurrency(items.reduce((sum, item) => sum + item.lineTotal, 0));
   const discountAmount = normalizeDiscountAmount(payload, subtotal, 'Sale');
-  const taxAmount = roundCurrency(Number(payload.taxAmount ?? payload.tax_amount ?? 0));
+  const taxAmount = roundCurrency(items.reduce((sum, item) => sum + item.taxAmount, 0));
   const totalAmount = roundCurrency(subtotal - discountAmount + taxAmount);
 
   if (totalAmount < 0) {
@@ -503,11 +541,13 @@ async function restockInventoryItem(client, requester, saleId, branchId, item) {
 }
 
 async function createCompletedSale(requester, payload) {
-  const normalized = normalizeSalePayload(payload);
   const client = await database.pool.connect();
 
   try {
     await client.query('BEGIN');
+
+    const productTaxRates = await findProductTaxRates(client, payload.items);
+    const normalized = normalizeSalePayload(payload, productTaxRates);
 
     const saleResult = await client.query(
       `INSERT INTO sales (
@@ -651,11 +691,13 @@ async function createCompletedSale(requester, payload) {
 }
 
 async function suspendSale(requester, payload) {
-  const normalized = normalizeSaleDraftPayload(payload);
   const client = await database.pool.connect();
 
   try {
     await client.query('BEGIN');
+
+    const productTaxRates = await findProductTaxRates(client, payload.items);
+    const normalized = normalizeSaleDraftPayload(payload, productTaxRates);
 
     const saleResult = await client.query(
       `INSERT INTO sales (
@@ -1147,6 +1189,7 @@ async function findById(saleId) {
 
 module.exports = {
   createCompletedSale,
+  findProductTaxRates,
   findAll,
   findById,
   mapRefundItemRow,
