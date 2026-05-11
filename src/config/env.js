@@ -32,6 +32,11 @@ const env = {
   inventory: {
     expiringThresholdDays: Number(process.env.INVENTORY_EXPIRING_THRESHOLD_DAYS || 30),
   },
+  loyalty: {
+    pointsEnabled: process.env.LOYALTY_POINTS_ENABLED !== 'false',
+    spendAmountPerPoint: Number(process.env.LOYALTY_SPEND_AMOUNT_PER_POINT || 100),
+    rounding: process.env.LOYALTY_POINTS_ROUNDING || 'floor',
+  },
   email: {
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),

@@ -1,4 +1,5 @@
 const database = require('../config/database');
+const { env } = require('../config/env');
 const HttpError = require('../utils/httpError');
 
 function roundCurrency(value) {
@@ -47,6 +48,57 @@ function normalizePaymentPayload(payment) {
     notes: normalizeNullableString(payment.notes),
     paidAt: normalizePaymentDate(payment.paidAt ?? payment.paid_at),
   };
+}
+
+function calculateLoyaltyPointsEarned(totalAmount, rules = env.loyalty) {
+  if (!rules?.pointsEnabled) {
+    return 0;
+  }
+
+  const spendAmountPerPoint = Number(rules.spendAmountPerPoint);
+
+  if (!Number.isFinite(spendAmountPerPoint) || spendAmountPerPoint <= 0) {
+    return 0;
+  }
+
+  const normalizedTotalAmount = Number(totalAmount);
+
+  if (!Number.isFinite(normalizedTotalAmount) || normalizedTotalAmount <= 0) {
+    return 0;
+  }
+
+  const rawPoints = normalizedTotalAmount / spendAmountPerPoint;
+  const rounding = String(rules.rounding || 'floor').trim().toLowerCase();
+  const points =
+    rounding === 'ceil'
+      ? Math.ceil(rawPoints)
+      : rounding === 'round'
+        ? Math.round(rawPoints)
+        : Math.floor(rawPoints);
+
+  return Number.isFinite(points) ? Math.max(0, points) : 0;
+}
+
+async function awardLoyaltyPoints(client, customerId, saleTotal) {
+  if (customerId === null || customerId === undefined) {
+    return 0;
+  }
+
+  const pointsEarned = calculateLoyaltyPointsEarned(saleTotal);
+
+  if (pointsEarned <= 0) {
+    return 0;
+  }
+
+  await client.query(
+    `UPDATE customers
+     SET loyalty_points = loyalty_points + $2,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [customerId, pointsEarned]
+  );
+
+  return pointsEarned;
 }
 
 function normalizeDiscountType(value, label) {
@@ -673,6 +725,12 @@ async function createCompletedSale(requester, payload) {
       );
     }
 
+    const loyaltyPointsEarned = await awardLoyaltyPoints(
+      client,
+      normalized.customerId,
+      normalized.totalAmount
+    );
+
     await client.query('COMMIT');
 
     return {
@@ -680,6 +738,7 @@ async function createCompletedSale(requester, payload) {
       payment: mapPaymentRow(paymentResult.rows[0]),
       payments: paymentResult.rows.map(mapPaymentRow),
       inventoryAdjustments,
+      loyaltyPointsEarned,
     };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -1188,6 +1247,7 @@ async function findById(saleId) {
 }
 
 module.exports = {
+  calculateLoyaltyPointsEarned,
   createCompletedSale,
   findProductTaxRates,
   findAll,

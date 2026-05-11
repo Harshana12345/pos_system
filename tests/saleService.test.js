@@ -581,6 +581,167 @@ test('createCompletedSale records multiple split payments for one sale', {
   assert.equal(sale.payments[1].method, 'card');
 });
 
+test('createCompletedSale awards loyalty points for completed customer sales', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const { env } = require('../src/config/env');
+  const saleService = require('../src/services/saleService');
+  const originalConnect = database.pool.connect;
+  const originalLoyaltyRules = { ...env.loyalty };
+  const queries = [];
+  const client = {
+    query: async (sql, params = []) => {
+      queries.push({ sql, params });
+
+      if (/INSERT INTO sales/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '70',
+              customer_id: params[0],
+              branch_id: params[1],
+              status: 'completed',
+              subtotal: params[2],
+              discount_amount: params[3],
+              tax_amount: params[4],
+              total_amount: params[5],
+              paid_amount: params[6],
+              balance_amount: params[7],
+              payment_status: 'paid',
+              created_by: params[8],
+              created_at: new Date('2026-05-10T00:00:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/FROM products/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [{ id: '10', tax_rate: '0.00' }],
+        };
+      }
+
+      if (/INSERT INTO sale_payments/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '71',
+              sale_id: params[0],
+              amount: params[1],
+              method: params[2],
+              reference_number: params[3],
+              notes: params[4],
+              paid_at: params[5],
+              created_by: params[6],
+              created_at: new Date('2026-05-10T00:00:30.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/INSERT INTO sale_items/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '90',
+              sale_id: params[0],
+              product_id: params[1],
+              variant_id: params[2],
+              quantity: params[3],
+              unit_price: params[4],
+              discount_amount: params[5],
+              line_total: params[6],
+            },
+          ],
+        };
+      }
+
+      if (/FROM inventory/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '30',
+              product_id: params[0],
+              variant_id: null,
+              branch_id: params[1],
+              quantity: 8,
+            },
+          ],
+        };
+      }
+
+      if (/UPDATE inventory/.test(sql)) {
+        return { rowCount: 1, rows: [] };
+      }
+
+      if (/INSERT INTO inventory_adjustments/.test(sql)) {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: '99',
+              inventory_id: params[0],
+              product_id: params[1],
+              variant_id: params[2],
+              branch_id: params[3],
+              previous_quantity: params[4],
+              new_quantity: params[5],
+              quantity_change: params[6],
+              reason: params[7],
+              adjusted_by_user_id: params[8],
+              created_at: new Date('2026-05-10T00:01:00.000Z'),
+            },
+          ],
+        };
+      }
+
+      if (/UPDATE customers/.test(sql)) {
+        return { rowCount: 1, rows: [] };
+      }
+
+      return { rowCount: 0, rows: [] };
+    },
+    release: () => {},
+  };
+
+  t.after(() => {
+    database.pool.connect = originalConnect;
+    env.loyalty = originalLoyaltyRules;
+  });
+
+  database.pool.connect = async () => client;
+  env.loyalty = {
+    pointsEnabled: true,
+    spendAmountPerPoint: 100,
+    rounding: 'floor',
+  };
+
+  const sale = await saleService.createCompletedSale(
+    { id: 42 },
+    {
+      customerId: '1',
+      branchId: '2',
+      paidAmount: '200.00',
+      paymentMethod: 'cash',
+      items: [{ productId: '10', quantity: '2', unitPrice: '100.00' }],
+    }
+  );
+
+  const loyaltyQuery = queries.find(({ sql }) => /UPDATE customers/.test(sql));
+
+  assert.ok(loyaltyQuery);
+  assert.match(loyaltyQuery.sql, /loyalty_points = loyalty_points \+ \$2/);
+  assert.deepEqual(loyaltyQuery.params, [1, 2]);
+  assert.equal(queries.at(-1).sql, 'COMMIT');
+  assert.equal(sale.loyaltyPointsEarned, 2);
+});
+
 test('createCompletedSale rejects insufficient stock and rolls back', {
   skip: !dependenciesAvailable,
 }, async (t) => {
@@ -794,6 +955,37 @@ test('normalizeSaleDraftPayload applies item and order discount rules', {
   assert.equal(draft.discountAmount, 1.9);
   assert.equal(draft.taxAmount, 1.7);
   assert.equal(draft.totalAmount, 18.8);
+});
+
+test('calculateLoyaltyPointsEarned applies configured rounding rules', {
+  skip: !dependenciesAvailable,
+}, () => {
+  const saleService = require('../src/services/saleService');
+
+  assert.equal(
+    saleService.calculateLoyaltyPointsEarned(249.99, {
+      pointsEnabled: true,
+      spendAmountPerPoint: 100,
+      rounding: 'floor',
+    }),
+    2
+  );
+  assert.equal(
+    saleService.calculateLoyaltyPointsEarned(249.99, {
+      pointsEnabled: true,
+      spendAmountPerPoint: 100,
+      rounding: 'ceil',
+    }),
+    3
+  );
+  assert.equal(
+    saleService.calculateLoyaltyPointsEarned(249.99, {
+      pointsEnabled: false,
+      spendAmountPerPoint: 100,
+      rounding: 'floor',
+    }),
+    0
+  );
 });
 
 test('suspendSale stores a sale draft without payment or inventory movement', {
