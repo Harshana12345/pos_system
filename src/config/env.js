@@ -45,6 +45,11 @@ const env = {
     password: process.env.SMTP_PASSWORD,
     from: process.env.EMAIL_FROM || 'POS System <no-reply@pos-system.local>',
   },
+  sms: {
+    webhookUrl: process.env.SMS_WEBHOOK_URL,
+    apiKey: process.env.SMS_API_KEY,
+    from: process.env.SMS_FROM || 'POS System',
+  },
 };
 
 module.exports = { env };

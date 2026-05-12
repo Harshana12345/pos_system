@@ -23,6 +23,10 @@ test('sale routes register sales endpoints', {
   const hasCreateRoute = saleRoutes.stack.some(
     (layer) => layer.route?.path === '/' && layer.route.methods.post === true
   );
+  const hasReceiptSmsRoute = saleRoutes.stack.some(
+    (layer) =>
+      layer.route?.path === '/:id/receipt/sms' && layer.route.methods.post === true
+  );
   const hasRefundRoute = saleRoutes.stack.some(
     (layer) => layer.route?.path === '/refund' && layer.route.methods.post === true
   );
@@ -36,6 +40,7 @@ test('sale routes register sales endpoints', {
   assert.equal(hasListRoute, true);
   assert.equal(hasDetailRoute, true);
   assert.equal(hasCreateRoute, true);
+  assert.equal(hasReceiptSmsRoute, true);
   assert.equal(hasRefundRoute, true);
   assert.equal(hasResumeRoute, true);
   assert.equal(hasSuspendRoute, true);

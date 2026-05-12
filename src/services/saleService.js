@@ -1,5 +1,6 @@
 const database = require('../config/database');
 const { env } = require('../config/env');
+const smsService = require('./smsService');
 const HttpError = require('../utils/httpError');
 
 function roundCurrency(value) {
@@ -414,6 +415,32 @@ function mapPaymentRow(row) {
     createdBy: row.created_by,
     createdAt: row.created_at,
   };
+}
+
+function formatCurrency(amount, currency) {
+  const normalizedAmount = Number(amount);
+
+  return `${currency || 'USD'} ${normalizedAmount.toFixed(2)}`;
+}
+
+function buildReceiptSmsMessage({ sale, items, currency }) {
+  const itemSummary = items
+    .slice(0, 3)
+    .map((item) => `${item.name} x${item.quantity}`)
+    .join(', ');
+  const extraItems = items.length > 3 ? ` +${items.length - 3} more` : '';
+  const parts = [
+    `Receipt #${sale.id}`,
+    itemSummary ? `${itemSummary}${extraItems}` : null,
+    `Total ${formatCurrency(sale.totalAmount, currency)}`,
+    `Paid ${formatCurrency(sale.paidAmount, currency)}`,
+  ];
+
+  if (sale.balanceAmount > 0) {
+    parts.push(`Balance ${formatCurrency(sale.balanceAmount, currency)}`);
+  }
+
+  return parts.filter(Boolean).join('. ');
 }
 
 function mapForeignKeyError(error) {
@@ -1246,7 +1273,91 @@ async function findById(saleId) {
   };
 }
 
+async function sendReceiptSms(saleId) {
+  const saleResult = await database.query(
+    `SELECT s.id,
+            s.customer_id,
+            s.branch_id,
+            s.status,
+            s.subtotal,
+            s.discount_amount,
+            s.tax_amount,
+            s.total_amount,
+            s.paid_amount,
+            s.balance_amount,
+            s.payment_status,
+            s.created_by,
+            s.created_at,
+            c.phone AS customer_phone,
+            b.currency
+     FROM sales s
+     LEFT JOIN customers c
+       ON c.id = s.customer_id
+     INNER JOIN branches b
+       ON b.id = s.branch_id
+     WHERE s.id = $1`,
+    [saleId]
+  );
+
+  if (saleResult.rowCount === 0) {
+    throw new HttpError(404, 'Sale not found.');
+  }
+
+  const sale = mapSaleRow(saleResult.rows[0]);
+  const phone = normalizeNullableString(saleResult.rows[0].customer_phone);
+
+  if (sale.customerId === null || sale.customerId === undefined) {
+    throw new HttpError(400, 'Sale is not linked to a customer.');
+  }
+
+  if (!phone) {
+    throw new HttpError(400, 'Customer phone number is required to send an SMS receipt.');
+  }
+
+  const itemResult = await database.query(
+    `SELECT si.id,
+            si.sale_id,
+            si.product_id,
+            si.variant_id,
+            si.quantity,
+            si.unit_price,
+            si.discount_amount,
+            si.line_total,
+            COALESCE(pv.name, p.name) AS item_name
+     FROM sale_items si
+     INNER JOIN products p
+       ON p.id = si.product_id
+     LEFT JOIN product_variants pv
+       ON pv.id = si.variant_id
+     WHERE si.sale_id = $1
+     ORDER BY si.id ASC`,
+    [saleId]
+  );
+  const items = itemResult.rows.map((row) => ({
+    ...mapSaleItemRow(row),
+    name: row.item_name,
+  }));
+  const message = buildReceiptSmsMessage({
+    sale,
+    items,
+    currency: saleResult.rows[0].currency,
+  });
+  const delivery = await smsService.sendSms({
+    to: phone,
+    message,
+  });
+
+  return {
+    saleId: sale.id,
+    customerId: sale.customerId,
+    to: phone,
+    message,
+    deliveryStatus: delivery.status,
+  };
+}
+
 module.exports = {
+  buildReceiptSmsMessage,
   calculateLoyaltyPointsEarned,
   createCompletedSale,
   findProductTaxRates,
@@ -1263,5 +1374,6 @@ module.exports = {
   normalizeSalePayload,
   processRefund,
   resumeSuspendedSale,
+  sendReceiptSms,
   suspendSale,
 };

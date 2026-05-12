@@ -1520,3 +1520,188 @@ test('processRefund rejects quantities already refunded and rolls back', {
   assert.equal(queries.some(({ sql }) => /INSERT INTO sale_refunds/.test(sql)), false);
   assert.equal(queries.at(-1).sql, 'ROLLBACK');
 });
+
+test('sendReceiptSms sends a receipt summary to the customer phone', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const saleService = require('../src/services/saleService');
+  const smsService = require('../src/services/smsService');
+  const originalQuery = database.query;
+  const originalSendSms = smsService.sendSms;
+  const queries = [];
+  const sentMessages = [];
+
+  t.after(() => {
+    database.query = originalQuery;
+    smsService.sendSms = originalSendSms;
+  });
+
+  database.query = async (sql, params = []) => {
+    queries.push({ sql, params });
+
+    if (/FROM sales s/.test(sql)) {
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: '70',
+            customer_id: '1',
+            branch_id: '2',
+            status: 'completed',
+            subtotal: '19.00',
+            discount_amount: '1.00',
+            tax_amount: '0.50',
+            total_amount: '18.50',
+            paid_amount: '18.50',
+            balance_amount: '0.00',
+            payment_status: 'paid',
+            created_by: '42',
+            created_at: new Date('2026-05-10T00:00:00.000Z'),
+            customer_phone: ' +15551234567 ',
+            currency: 'USD',
+          },
+        ],
+      };
+    }
+
+    if (/FROM sale_items si/.test(sql)) {
+      return {
+        rowCount: 2,
+        rows: [
+          {
+            id: '90',
+            sale_id: '70',
+            product_id: '10',
+            variant_id: null,
+            quantity: '2',
+            unit_price: '9.50',
+            discount_amount: '0.00',
+            line_total: '19.00',
+            item_name: 'Coffee',
+          },
+          {
+            id: '91',
+            sale_id: '70',
+            product_id: '11',
+            variant_id: '5',
+            quantity: '1',
+            unit_price: '3.00',
+            discount_amount: '0.50',
+            line_total: '2.50',
+            item_name: 'Large',
+          },
+        ],
+      };
+    }
+
+    return { rowCount: 0, rows: [] };
+  };
+
+  smsService.sendSms = async (payload) => {
+    sentMessages.push(payload);
+
+    return { status: 'sent', to: payload.to };
+  };
+
+  const receipt = await saleService.sendReceiptSms(70);
+
+  assert.match(queries[0].sql, /LEFT JOIN customers/);
+  assert.match(queries[0].sql, /INNER JOIN branches/);
+  assert.deepEqual(queries[0].params, [70]);
+  assert.match(queries[1].sql, /INNER JOIN products/);
+  assert.match(queries[1].sql, /LEFT JOIN product_variants/);
+  assert.deepEqual(queries[1].params, [70]);
+  assert.equal(sentMessages.length, 1);
+  assert.equal(sentMessages[0].to, '+15551234567');
+  assert.equal(
+    sentMessages[0].message,
+    'Receipt #70. Coffee x2, Large x1. Total USD 18.50. Paid USD 18.50'
+  );
+  assert.equal(receipt.saleId, '70');
+  assert.equal(receipt.customerId, '1');
+  assert.equal(receipt.deliveryStatus, 'sent');
+});
+
+test('sendReceiptSms rejects sales without a customer phone', {
+  skip: !dependenciesAvailable,
+}, async (t) => {
+  const database = require('../src/config/database');
+  const saleService = require('../src/services/saleService');
+  const smsService = require('../src/services/smsService');
+  const originalQuery = database.query;
+  const originalSendSms = smsService.sendSms;
+  const queries = [];
+  let sendSmsCalled = false;
+
+  t.after(() => {
+    database.query = originalQuery;
+    smsService.sendSms = originalSendSms;
+  });
+
+  database.query = async (sql, params = []) => {
+    queries.push({ sql, params });
+
+    return {
+      rowCount: 1,
+      rows: [
+        {
+          id: '70',
+          customer_id: '1',
+          branch_id: '2',
+          status: 'completed',
+          subtotal: '19.00',
+          discount_amount: '1.00',
+          tax_amount: '0.50',
+          total_amount: '18.50',
+          paid_amount: '18.50',
+          balance_amount: '0.00',
+          payment_status: 'paid',
+          created_by: '42',
+          created_at: new Date('2026-05-10T00:00:00.000Z'),
+          customer_phone: null,
+          currency: 'USD',
+        },
+      ],
+    };
+  };
+
+  smsService.sendSms = async () => {
+    sendSmsCalled = true;
+  };
+
+  await assert.rejects(() => saleService.sendReceiptSms(70), {
+    statusCode: 400,
+    message: 'Customer phone number is required to send an SMS receipt.',
+  });
+
+  assert.equal(queries.length, 1);
+  assert.equal(sendSmsCalled, false);
+});
+
+test('buildReceiptSmsMessage includes item overflow and balance', {
+  skip: !dependenciesAvailable,
+}, () => {
+  const saleService = require('../src/services/saleService');
+
+  const message = saleService.buildReceiptSmsMessage({
+    sale: {
+      id: '71',
+      totalAmount: 25,
+      paidAmount: 20,
+      balanceAmount: 5,
+    },
+    currency: 'LKR',
+    items: [
+      { name: 'A', quantity: 1 },
+      { name: 'B', quantity: 2 },
+      { name: 'C', quantity: 3 },
+      { name: 'D', quantity: 4 },
+    ],
+  });
+
+  assert.equal(
+    message,
+    'Receipt #71. A x1, B x2, C x3 +1 more. Total LKR 25.00. Paid LKR 20.00. Balance LKR 5.00'
+  );
+});

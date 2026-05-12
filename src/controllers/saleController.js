@@ -126,11 +126,29 @@ async function resumeSale(req, res, next) {
   }
 }
 
+async function sendReceiptSms(req, res, next) {
+  if (!isPositiveInteger(req.params.id)) {
+    next(new HttpError(400, 'Sale ID must be a positive integer.'));
+    return;
+  }
+
+  try {
+    const receipt = await saleService.sendReceiptSms(Number(req.params.id));
+
+    res.status(200).json({
+      data: receipt,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   createSale,
   getSale,
   listSales,
   refundSale,
   resumeSale,
+  sendReceiptSms,
   suspendSale,
 };
